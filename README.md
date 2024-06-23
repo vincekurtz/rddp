@@ -1,7 +1,7 @@
 # Reward-Driven Diffusion Policy
 
-Training diffusion policies without demonstrations via connections between
-Langevin sampling and path integral control.
+Can we train diffusion policies without demonstrations, by connecting Langevin
+sampling with path-integral control?
 
 ## Setup (Conda)
 
