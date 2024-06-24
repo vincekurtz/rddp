@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Tuple
 
+import jax
 import jax.numpy as jnp
 
 
@@ -68,3 +69,25 @@ class DynamicalSystem(ABC):
             num_steps: The number of time steps to simulate.
         """
         raise NotImplementedError
+
+    def rollout(
+        self, control_tape: jnp.ndarray, x0: jnp.ndarray
+    ) -> jnp.ndarray:
+        """Simulate the system forward in time given a control tape.
+
+        Args:
+            control_tape: The control tape U = [u₀, u₁, ..., u_T₋₁].
+            x0: The initial state x₀.
+
+        Returns:
+            The state trajectory X = [x₀, x₁, ..., x_T].
+        """
+        num_steps = control_tape.shape[0]
+
+        def scan_fn(x: jnp.ndarray, t: int):
+            u = control_tape[t]
+            x_next = self.f(x, u)
+            return x_next, x_next
+
+        _, X = jax.lax.scan(scan_fn, x0, jnp.arange(num_steps))
+        return jnp.vstack([x0, X])
