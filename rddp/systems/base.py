@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Callable, Tuple
 
 import jax.numpy as jnp
 
@@ -12,6 +12,21 @@ class DynamicalSystem(ABC):
 
     where x is the state, u is the control action, and y is the output.
     """
+
+    @property
+    @abstractmethod
+    def state_shape(self) -> Tuple[int, ...]:
+        """The shape of the state space."""
+
+    @property
+    @abstractmethod
+    def action_shape(self) -> Tuple[int, ...]:
+        """The shape of the action space."""
+
+    @property
+    @abstractmethod
+    def observation_shape(self) -> Tuple[int, ...]:
+        """The shape of the observation space."""
 
     @abstractmethod
     def f(self, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
@@ -36,17 +51,20 @@ class DynamicalSystem(ABC):
             The output measurement.
         """
 
-    @property
-    @abstractmethod
-    def state_shape(self) -> Tuple[int, ...]:
-        """The shape of the state space."""
+    def simulate_and_render(
+        self,
+        x0: jnp.ndarray,
+        policy_fn: Callable[[jnp.ndarray], jnp.ndarray],
+        num_steps: int,
+    ) -> None:
+        """Simulate the system and render the resulting trajectory.
 
-    @property
-    @abstractmethod
-    def action_shape(self) -> Tuple[int, ...]:
-        """The shape of the action space."""
+        The rendering could be something simple, like printing to the console,
+        or something complicated, like running an interactive mujoco simulation.
 
-    @property
-    @abstractmethod
-    def observation_shape(self) -> Tuple[int, ...]:
-        """The shape of the observation space."""
+        Args:
+            x0: The initial state.
+            policy_fn: A function that maps observations to actions.
+            num_steps: The number of time steps to simulate.
+        """
+        raise NotImplementedError
