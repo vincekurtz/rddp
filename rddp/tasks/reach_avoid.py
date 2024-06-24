@@ -1,4 +1,6 @@
+import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from rddp.systems.single_integrator import SingleIntegrator
 from rddp.tasks.base import OptimalControlProblem
@@ -40,3 +42,22 @@ class ReachAvoid(OptimalControlProblem):
         """The terminal cost function."""
         err = x - self.target_position
         return err.dot(err)
+
+    def plot_scenario(self) -> None:
+        """Make a matplotlib visualization of the reach-avoid scenario."""
+        # Green star at the target position.
+        plt.plot(*self.target_position, "g*", markersize=20)
+
+        # Red contour plot of the obstacle cost
+        def obstacle_cost(px: jnp.ndarray, py: jnp.ndarray) -> jnp.ndarray:
+            x = jnp.array([px, py])
+            return self.running_cost(x, jnp.zeros(2), 0)
+
+        x = jnp.linspace(-3, 3, 100)
+        y = jnp.linspace(-3, 3, 100)
+        X, Y = jnp.meshgrid(x, y)
+        Z = jax.vmap(jax.vmap(obstacle_cost))(X, Y)
+        plt.contourf(X, Y, Z, cmap="Reds", levels=100)
+
+        plt.xlim(-3, 3)
+        plt.ylim(-3, 3)

@@ -8,7 +8,7 @@ def test_cost() -> None:
     prob = ReachAvoid(
         num_steps=10,
         obstacle_position=jnp.array([0.0, 0.0]),
-        target_position=jnp.array([1.5, 1.5]),
+        target_position=jnp.array([0.0, 1.5]),
     )
     x0 = jnp.array([-1.0, -1.0])
     control_tape = [
@@ -30,5 +30,16 @@ def test_cost() -> None:
     assert jnp.isclose(cost, cost2)
 
 
+def test_plot() -> None:
+    """Test plotting the reach-avoid scenario."""
+    prob = ReachAvoid(
+        num_steps=10,
+        obstacle_position=jnp.array([0.0, 0.0]),
+        target_position=jnp.array([0.0, 1.5]),
+    )
+    prob.plot_scenario()
+
+
 if __name__ == "__main__":
     test_cost()
+    test_plot()

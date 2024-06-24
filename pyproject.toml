@@ -53,6 +53,7 @@ ignore = [
     "D212",  # multi-line docstring summary at first line
     "D213",  # multi-line docstring summary at second line
     "E731",  # assigning to a `lambda` expression
+    "N806",  # only lowercase variables in functions
 ]
 
 [tool.ruff.lint.isort]
