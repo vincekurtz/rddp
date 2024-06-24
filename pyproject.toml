@@ -20,6 +20,7 @@ dependencies = [
     "pytest>=7.4.2",
     "ruff>=0.4.10",
     "pre-commit>=3.7.1",
+    "matplotlib>=3.8.3",
 ]
 
 [tool.ruff]
@@ -50,6 +51,7 @@ ignore = [
     "D211",  # no blank line before class
     "D212",  # multi-line docstring summary at first line
     "D213",  # multi-line docstring summary at second line
+    "E731",  # assigning to a `lambda` expression
 ]
 
 [tool.ruff.lint.isort]

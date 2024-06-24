@@ -1,6 +1,7 @@
-from typing import Tuple
+from typing import Callable, Tuple
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from rddp.systems.base import DynamicalSystem
 
@@ -41,3 +42,19 @@ class SingleIntegrator(DynamicalSystem):
     def g(self, x: jnp.ndarray) -> jnp.ndarray:
         """Output function."""
         return x
+
+    def simulate_and_render(
+        self,
+        x0: jnp.ndarray,
+        policy_fn: Callable[[jnp.ndarray], jnp.ndarray],
+        num_steps: int,
+    ) -> None:
+        """Simulate the system and make a matplotlib plot of the trajectory."""
+        xs = jnp.zeros((num_steps, 2))
+        xs = xs.at[0].set(x0)
+        for t in range(num_steps - 1):
+            x = xs[t]
+            u = policy_fn(self.g(x))
+            x = self.f(x, u)
+            xs = xs.at[t + 1].set(x)
+        plt.plot(xs[:, 0], xs[:, 1], "o-")
