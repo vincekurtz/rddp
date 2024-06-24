@@ -42,24 +42,52 @@ def estimate_noised_score(
     return s_hat / sigma**2
 
 
+def importance_sampling_noised_score_estimate(
+    x: jnp.ndarray, num_samples: int, sigma: float, rng: jax.random.PRNGKey
+) -> jnp.ndarray:
+    """Estimate the noised score at x using path-integral-style sampling.
+
+    Use importance sampling to generate estimates at each sampled value, rather
+    than a single estimate at x.
+    """
+    x_samples = jax.random.normal(rng, (num_samples,)) * sigma + x
+    J = energy(x_samples)
+    J = J - jnp.min(J)
+    weights = jnp.exp(-J / LAMBDA)
+    weights = weights / jnp.sum(weights)
+
+    s_hat_samples = []
+    for i in range(num_samples):
+        x_i = x_samples[i]
+        p = jax.scipy.stats.norm.pdf(x_samples, x_i, sigma)
+        q = jax.scipy.stats.norm.pdf(x_samples, x, sigma)
+        ratio = p / q
+        weights_i = jnp.exp(-J * ratio / LAMBDA)
+        weights_i = weights_i / jnp.sum(weights_i)
+        s_hat_i = weights_i.dot(x_samples - x_i) / sigma**2
+        s_hat_samples.append(s_hat_i)
+    s_hat_samples = jnp.array(s_hat_samples)
+    return s_hat_samples, x_samples
+
+
 if __name__ == "__main__":
     rng = jax.random.PRNGKey(0)
     x = jnp.linspace(-3, 3, 1000)
 
     plt.figure(figsize=(10, 10))
-    plt.subplot(3, 1, 1)
+    plt.subplot(2, 2, 1)
     plt.title("Energy")
     plt.plot(x, energy(x), label="Energy")
     plt.xlabel("x")
     plt.ylabel("E(x)")
 
-    plt.subplot(3, 1, 2)
+    plt.subplot(2, 2, 3)
     plt.title("Target Distrubtion")
     plt.plot(x, target_distribution(x), label="Target distribution")
     plt.xlabel("x")
     plt.ylabel("p(x)")
 
-    plt.subplot(3, 1, 3)
+    plt.subplot(2, 2, 2)
     plt.title("Score")
     plt.plot(x, true_score(x), label="True score")
 
@@ -80,5 +108,16 @@ if __name__ == "__main__":
     plt.xlabel("x")
     plt.ylabel("s(x)")
     plt.legend()
+
+    plt.subplot(2, 2, 4)
+    plt.title("Score with Importance Sampling")
+    plt.plot(x, true_score(x), label="True score")
+
+    x = 0.0
+    rng, sample_rng = jax.random.split(rng)
+    s_hats, x_hats = importance_sampling_noised_score_estimate(
+        x, 50, 0.1, sample_rng
+    )
+    plt.scatter(x_hats, s_hats, alpha=0.2, label="Estimated, sigma=0.01")
 
     plt.show()
