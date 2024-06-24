@@ -29,6 +29,17 @@ class OptimalControlProblem(ABC):
         self.num_steps = num_steps
 
     @abstractmethod
+    def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
+        """Sample an initial state x₀ from the initial state distribution p₀.
+
+        Args:
+            rng: The random number generator key.
+
+        Returns:
+            The initial state x₀.
+        """
+
+    @abstractmethod
     def running_cost(
         self, x: jnp.ndarray, u: jnp.ndarray, t: int
     ) -> jnp.ndarray:
