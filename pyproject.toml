@@ -43,6 +43,7 @@ select = [
 ]
 ignore = [
     "ANN101",  # missing type annotation for `self` in method
+    "ANN202",  # missing return type annotation for private function
     "ANN204",  # missing return type annotation for `__init__`
     "ANN401",  # dynamically typed expressions (typing.Any) are disallowed
     "D100",  # missing docstring in public module
