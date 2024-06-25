@@ -21,7 +21,7 @@ def solve_with_gradient_descent(
     cost_and_grad = jax.jit(
         jax.value_and_grad(lambda us: prob.total_cost(us, x0))
     )
-    U = jnp.zeros((prob.num_steps, prob.sys.action_shape[0]))
+    U = jnp.zeros((prob.num_steps - 1, prob.sys.action_shape[0]))
     J, grad = cost_and_grad(U)
 
     for i in range(5000):

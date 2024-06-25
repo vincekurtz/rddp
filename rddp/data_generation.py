@@ -40,13 +40,15 @@ class DatasetGenerationOptions:
 
     Attributes:
         num_initial_states: The number of initial states x₀ to sample.
-        num_data_points: The number of data points per initial state, N.
-        num_rollouts: The number of rollouts used to estimate each score, M.
+        num_data_points_per_initial_state: The number of data points per initial
+                                           state, N.
+        num_rollouts_per_data_point: The number of rollouts used to estimate
+                                     each score, M.
     """
 
     num_initial_states: int
-    num_data_points: int
-    num_rollouts: int
+    num_data_points_per_initial_state: int
+    num_rollouts_per_data_point: int
 
 
 class DatasetGenerator:
@@ -110,7 +112,28 @@ class DatasetGenerator:
             The sampled control tapes Ũʲ, j = 1..M.
             The importance weights wₖ(Ũʲ).
         """
-        raise NotImplementedError
+        M = self.datagen_options.num_rollouts_per_data_point
+        lmbda = self.langevin_options.temperature
+
+        # Sample control tapes Ũʲ ~ 𝒩(U,σ²)
+        rng, ctrl_rng = jax.random.split(rng)
+        U_noised = controls + sigma * jax.random.normal(
+            ctrl_rng, (M, *controls.shape)
+        )
+
+        # Compute the cost of each control tape
+        J = jax.vmap(self.prob.total_cost, in_axes=(0, None))(U_noised, x0)
+        J = J - jnp.min(J, axis=0)  # normalize for better numerics
+
+        # Compute importance weights
+        weights = jnp.exp(-J / lmbda)
+        weights = weights / (jnp.sum(weights, axis=0) + 1e-6)  # avoid / 0
+
+        # Compute the noised score estimate
+        deltaU = U_noised - controls
+        score_estimate = jnp.einsum("i,i...->...", weights, deltaU)
+
+        return score_estimate, U_noised, weights
 
     def generate_dataset(
         self, rng: jax.random.PRNGKey
