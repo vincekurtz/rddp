@@ -157,27 +157,28 @@ class DatasetGenerator:
         Returns:
             Dataset of states, controls, scores, and noise levels (x₀, U, ŝ, k).
         """
-        sigma = self.langevin_options.starting_noise_level
         L = self.langevin_options.num_noise_levels
         N = self.datagen_options.num_data_points_per_initial_state
+        sigmaL = self.langevin_options.starting_noise_level
+        gamma = self.langevin_options.noise_decay_rate
 
         # Sample μ_L ~ 𝒩(0, σ_L²)
         rng, mu_rng = jax.random.split(rng)
-        mu = sigma * jax.random.normal(
+        muL = sigmaL * jax.random.normal(
             mu_rng, (self.prob.num_steps - 1, *self.prob.sys.action_shape)
         )
 
-        for k in range(L - 1, -1, -1):
-            print("")
-            print("k =", k)
+        def scan_fn(carry: Tuple, k: int):
+            """Estimate scores at the k-th noise level."""
+            (mu, sigma, rng) = carry
+
             # Sample N control tapes Uₖⁱ ~ 𝒩(μₖ, σₖ²)
             rng, ctrl_rng = jax.random.split(rng)
             U = mu + sigma * jax.random.normal(ctrl_rng, (N, *mu.shape))
 
-            # Estimate noised scores ŝ = σₖ² ∇ log pₖ(U | x₀) with M rollouts
+            # Estimate noised scores ŝ = σₖ² ∇ log pₖ(U | x₀)
             rng, score_rng = jax.random.split(rng)
             score_rng = jax.random.split(score_rng, N)
-
             s, U_noised, weights = jax.vmap(
                 self.estimate_noised_score, in_axes=(None, 0, None, 0)
             )(x0, U, sigma, score_rng)
@@ -186,8 +187,17 @@ class DatasetGenerator:
             # TODO: figure out a better/more principled thing to do here
             mu = jnp.einsum("ij,ij...->...", weights, U_noised) / N
 
-            print("sigma:", sigma)
-            print("cost:", self.prob.total_cost(mu, x0))
-
             # Update σₖ₋₁ = γ σₖ
-            sigma *= self.langevin_options.noise_decay_rate
+            sigma *= gamma
+
+            # Put together the dataset (x₀, Uₖⁱ, ŝₖⁱ, k)
+            dataset = (jnp.tile(x0, (N, 1)), U, s, jnp.full((N,), k))
+
+            return (mu, sigma, rng), dataset
+
+        rng, rollouts_rng = jax.random.split(rng)
+        _, dataset = jax.lax.scan(
+            scan_fn, (muL, sigmaL, rollouts_rng), jnp.arange(L - 1, -1, -1)
+        )
+
+        return dataset

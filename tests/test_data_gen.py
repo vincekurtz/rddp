@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from rddp.data_generation import (
     AnnealedLangevinOptions,
@@ -57,15 +58,15 @@ def test_gen_from_state() -> None:
 
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.1,
-        num_noise_levels=100,
+        temperature=0.01,
+        num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=1,
-        num_data_points_per_initial_state=5,
-        num_rollouts_per_data_point=10,
+        num_data_points_per_initial_state=64,
+        num_rollouts_per_data_point=16,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
@@ -74,7 +75,32 @@ def test_gen_from_state() -> None:
 
     # Generate the dataset
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_from_state(x0, gen_rng)
+    (x0s, Us, scores, ks) = generator.generate_from_state(x0, gen_rng)
+
+    # Check sizes
+    L = langevin_options.num_noise_levels
+    N = gen_options.num_data_points_per_initial_state
+    assert x0s.shape == (L, N, 2)
+    assert Us.shape == (L, N, prob.num_steps - 1, 2)
+    assert scores.shape == (L, N, prob.num_steps - 1, 2)
+    assert ks.shape == (L, N)
+
+    plt.figure()
+    prob.plot_scenario()
+    Xs = jax.vmap(jax.vmap(prob.sys.rollout))(Us, x0s)
+    for k in range(L):
+        plt.plot(
+            Xs[k, 0, :, 0], Xs[k, 0, :, 1], "o-", color="blue", alpha=k / L
+        )
+
+    plt.figure()
+    costs = jax.vmap(jax.vmap(prob.total_cost))(Us, x0s)
+    plt.plot(ks, costs, "o-")
+    plt.xlabel("Noise level")
+    plt.ylabel("Cost")
+    plt.yscale("log")
+
+    plt.show()
 
 
 if __name__ == "__main__":
