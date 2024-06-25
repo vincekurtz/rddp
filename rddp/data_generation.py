@@ -86,7 +86,7 @@ class DatasetGenerator:
         controls: jnp.ndarray,
         sigma: float,
         rng: jax.random.PRNGKey,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> jnp.ndarray:
         """Estimate the noised score s = σ² ∇ log pₖ(U | x₀) with M rollouts.
 
         The score of the noised target distribution
@@ -109,8 +109,6 @@ class DatasetGenerator:
 
         Returns:
             The noised score estimate ŝ = σ² ∇ log pₖ(U | x₀).
-            The sampled control tapes Ũʲ, j = 1..M.
-            The importance weights wₖ(Ũʲ).
         """
         M = self.datagen_options.num_rollouts_per_data_point
         lmbda = self.langevin_options.temperature
@@ -133,7 +131,7 @@ class DatasetGenerator:
         deltaU = U_noised - controls
         score_estimate = jnp.einsum("i,i...->...", weights, deltaU)
 
-        return score_estimate, U_noised, weights
+        return score_estimate
 
     def generate_from_state(
         self, x0: jnp.ndarray, rng: jax.random.PRNGKey
@@ -145,8 +143,8 @@ class DatasetGenerator:
           - For each noise level k = L, L-1, ..., 0:
               - Sample Uₖⁱ ~ 𝒩(μₖ, σₖ²), i = 1..N
               - Estimate noised score ŝ = σₖ² ∇ log pₖ(Uₖⁱ | x₀) with M rollouts
-              - Add (x₀, Uₖⁱ, ŝ, k) to the dataset
-              - Update the mean control tape μₖ₋₁ = MPPI(Uₖⁱʲ)
+              - Add (x₀, Uₖⁱ, ŝₖⁱ, k) to the dataset
+              - Update the mean control tape μₖ₋₁ = μₖ₋₁ + 1/N ∑ᵢ ŝₖⁱ
 
         By the end of this process, μ₀ should be close to a local optimum.
 
@@ -179,13 +177,13 @@ class DatasetGenerator:
             # Estimate noised scores ŝ = σₖ² ∇ log pₖ(U | x₀)
             rng, score_rng = jax.random.split(rng)
             score_rng = jax.random.split(score_rng, N)
-            s, U_noised, weights = jax.vmap(
+            s = jax.vmap(
                 self.estimate_noised_score, in_axes=(None, 0, None, 0)
             )(x0, U, sigma, score_rng)
 
-            # Update μₖ₋₁ = MPPI(Uₖⁱʲ)
-            # TODO: figure out a better/more principled thing to do here
-            mu = jnp.einsum("ij,ij...->...", weights, U_noised) / N
+            # Update μₖ₋₁ by descending the score gradient
+            # TODO: figure out a better/more principled update
+            mu = mu + jnp.mean(s, axis=0)
 
             # Update σₖ₋₁ = γ σₖ
             sigma *= gamma

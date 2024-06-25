@@ -49,13 +49,13 @@ def plot_dataset() -> None:
     langevin_options = AnnealedLangevinOptions(
         temperature=0.01,
         num_noise_levels=100,
-        starting_noise_level=0.1,
+        starting_noise_level=1.0,
         noise_decay_rate=0.95,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=1,
         num_data_points_per_initial_state=16,
-        num_rollouts_per_data_point=32,
+        num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 

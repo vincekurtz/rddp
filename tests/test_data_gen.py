@@ -39,13 +39,9 @@ def test_score_estimate() -> None:
 
     # Estimate the score
     rng, score_estimate_rng = jax.random.split(rng)
-    s, U_noised, weights = generator.estimate_noised_score(
-        x0, U, sigma, score_estimate_rng
-    )
+    s = generator.estimate_noised_score(x0, U, sigma, score_estimate_rng)
 
     assert s.shape == U.shape
-    assert U_noised.shape == (gen_options.num_rollouts_per_data_point, *U.shape)
-    assert weights.shape == (gen_options.num_rollouts_per_data_point,)
 
     # Gradient descent should improve the cost
     assert prob.total_cost(U, x0) > prob.total_cost(U + s, x0)
