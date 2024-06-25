@@ -135,14 +135,13 @@ class DatasetGenerator:
 
         return score_estimate, U_noised, weights
 
-    def generate_dataset(
-        self, rng: jax.random.PRNGKey
+    def generate_from_state(
+        self, x0: jnp.ndarray, rng: jax.random.PRNGKey
     ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Generate a dataset of noised score estimates from one initial state.
 
-        The procedure for doing so is as follows:
-          - Sample an initial state x₀
-          - Sample a control tape μ = [u₀, u₁, ..., u_T₋₁] ~ 𝒩(0, σ_L²)
+        Starting from initial state x₀:
+          - Sample a control tape μ_L = [u₀, u₁, ..., u_T₋₁] ~ 𝒩(0, σ_L²)
           - For each noise level k = L, L-1, ..., 0:
               - Sample Uₖⁱ ~ 𝒩(μₖ, σₖ²), i = 1..N
               - Estimate noised score ŝ = σₖ² ∇ log pₖ(Uₖⁱ | x₀) with M rollouts
@@ -152,9 +151,43 @@ class DatasetGenerator:
         By the end of this process, μ₀ should be close to a local optimum.
 
         Args:
+            x0: The initial state x₀.
             rng: The random number generator key.
 
         Returns:
             Dataset of states, controls, scores, and noise levels (x₀, U, ŝ, k).
         """
-        raise NotImplementedError
+        sigma = self.langevin_options.starting_noise_level
+        L = self.langevin_options.num_noise_levels
+        N = self.datagen_options.num_data_points_per_initial_state
+
+        # Sample μ_L ~ 𝒩(0, σ_L²)
+        rng, mu_rng = jax.random.split(rng)
+        mu = sigma * jax.random.normal(
+            mu_rng, (self.prob.num_steps - 1, *self.prob.sys.action_shape)
+        )
+
+        for k in range(L - 1, -1, -1):
+            print("")
+            print("k =", k)
+            # Sample N control tapes Uₖⁱ ~ 𝒩(μₖ, σₖ²)
+            rng, ctrl_rng = jax.random.split(rng)
+            U = mu + sigma * jax.random.normal(ctrl_rng, (N, *mu.shape))
+
+            # Estimate noised scores ŝ = σₖ² ∇ log pₖ(U | x₀) with M rollouts
+            rng, score_rng = jax.random.split(rng)
+            score_rng = jax.random.split(score_rng, N)
+
+            s, U_noised, weights = jax.vmap(
+                self.estimate_noised_score, in_axes=(None, 0, None, 0)
+            )(x0, U, sigma, score_rng)
+
+            # Update μₖ₋₁ = MPPI(Uₖⁱʲ)
+            # TODO: figure out a better/more principled thing to do here
+            mu = jnp.einsum("ij,ij...->...", weights, U_noised) / N
+
+            print("sigma:", sigma)
+            print("cost:", self.prob.total_cost(mu, x0))
+
+            # Update σₖ₋₁ = γ σₖ
+            sigma *= self.langevin_options.noise_decay_rate

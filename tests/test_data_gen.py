@@ -51,5 +51,32 @@ def test_score_estimate() -> None:
     assert prob.total_cost(U, x0) > prob.total_cost(U + s, x0)
 
 
+def test_gen_from_state() -> None:
+    """Test dataset generation from a single initial state."""
+    rng = jax.random.PRNGKey(0)
+
+    prob = ReachAvoid(num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        temperature=0.1,
+        num_noise_levels=100,
+        starting_noise_level=0.1,
+        noise_decay_rate=0.97,
+    )
+    gen_options = DatasetGenerationOptions(
+        num_initial_states=1,
+        num_data_points_per_initial_state=5,
+        num_rollouts_per_data_point=10,
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+
+    # Set the initial state
+    x0 = jnp.array([0.1, -1.5])
+
+    # Generate the dataset
+    rng, gen_rng = jax.random.split(rng)
+    generator.generate_from_state(x0, gen_rng)
+
+
 if __name__ == "__main__":
-    test_score_estimate()
+    # test_score_estimate()
+    test_gen_from_state()
