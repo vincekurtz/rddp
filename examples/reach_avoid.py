@@ -63,6 +63,11 @@ def plot_dataset() -> None:
     rng, gen_rng = jax.random.split(rng)
     (x0s, Us, scores, ks) = generator.generate_from_state(x0, gen_rng)
 
+    print("x0:", x0s.shape)
+    print("U:", Us.shape)
+    print("s:", scores.shape)
+    print("k:", ks.shape)
+
     # Make some plots
     gamma = langevin_options.noise_decay_rate
     sigma_L = langevin_options.starting_noise_level

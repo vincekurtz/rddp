@@ -87,6 +87,39 @@ def test_gen_from_state() -> None:
     assert jnp.all(final_costs < start_costs)
 
 
+def test_generate() -> None:
+    """Test the main dataset generation function."""
+    rng = jax.random.PRNGKey(0)
+
+    prob = ReachAvoid(num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        temperature=0.01,
+        num_noise_levels=250,
+        starting_noise_level=0.1,
+        noise_decay_rate=0.97,
+    )
+    gen_options = DatasetGenerationOptions(
+        num_initial_states=3,
+        num_data_points_per_initial_state=8,
+        num_rollouts_per_data_point=12,
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+
+    rng, gen_rng = jax.random.split(rng)
+    x0, U, s, k = generator.generate(gen_rng)
+
+    # Check sizes
+    Nx = gen_options.num_initial_states
+    L = langevin_options.num_noise_levels
+    N = gen_options.num_data_points_per_initial_state
+
+    assert x0.shape == (Nx * L * N, 2)
+    assert U.shape == (Nx * L * N, prob.num_steps - 1, 2)
+    assert s.shape == (Nx * L * N, prob.num_steps - 1, 2)
+    assert k.shape == (Nx * L * N,)
+
+
 if __name__ == "__main__":
     test_score_estimate()
     test_gen_from_state()
+    test_generate()

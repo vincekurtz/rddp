@@ -199,3 +199,40 @@ class DatasetGenerator:
         )
 
         return dataset
+
+    def generate(
+        self, rng: jax.random.PRNGKey
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Generate a dataset of noised score estimates, (x₀, U, ŝ, k).
+
+        Data is generated for various initial conditions and noise levels, but
+        flattened into a single dataset with shape [sample, data].
+
+        Args:
+            x0: The initial state x₀.
+            rng: The random number generator key.
+
+        Returns:
+            Dataset of states, controls, scores, and noise levels (x₀, U, ŝ, k).
+        """
+        # Sample initial states
+        rng, state_rng = jax.random.split(rng)
+        state_rng = jax.random.split(
+            state_rng, self.datagen_options.num_initial_states
+        )
+        x0s = jax.vmap(self.prob.sample_initial_state)(state_rng)
+
+        # Generate data for each initial state
+        rng, gen_rng = jax.random.split(rng)
+        gen_rng = jax.random.split(
+            gen_rng, self.datagen_options.num_initial_states
+        )
+        x0, U, s, k = jax.vmap(self.generate_from_state)(x0s, gen_rng)
+
+        # Flatten the data across initial states, noise levels, and data points.
+        x0 = jnp.reshape(x0, (-1, *x0.shape[3:]))
+        U = jnp.reshape(U, (-1, *U.shape[3:]))
+        s = jnp.reshape(s, (-1, *s.shape[3:]))
+        k = jnp.reshape(k, (-1, *k.shape[3:]))
+
+        return x0, U, s, k
