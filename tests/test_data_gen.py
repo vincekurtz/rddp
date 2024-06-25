@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 
 from rddp.data_generation import (
     AnnealedLangevinOptions,
@@ -85,24 +84,13 @@ def test_gen_from_state() -> None:
     assert scores.shape == (L, N, prob.num_steps - 1, 2)
     assert ks.shape == (L, N)
 
-    plt.figure()
-    prob.plot_scenario()
-    Xs = jax.vmap(jax.vmap(prob.sys.rollout))(Us, x0s)
-    for k in range(L):
-        plt.plot(
-            Xs[k, 0, :, 0], Xs[k, 0, :, 1], "o-", color="blue", alpha=k / L
-        )
-
-    plt.figure()
+    # Check that the costs decreased
     costs = jax.vmap(jax.vmap(prob.total_cost))(Us, x0s)
-    plt.plot(ks, costs, "o-")
-    plt.xlabel("Noise level")
-    plt.ylabel("Cost")
-    plt.yscale("log")
-
-    plt.show()
+    start_costs = costs[0, ...]
+    final_costs = costs[-1, ...]
+    assert jnp.all(final_costs < start_costs)
 
 
 if __name__ == "__main__":
-    # test_score_estimate()
+    test_score_estimate()
     test_gen_from_state()
