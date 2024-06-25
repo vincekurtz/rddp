@@ -1,3 +1,7 @@
+from typing import Tuple
+
+import jax
+import jax.numpy as jnp
 from flax.struct import dataclass
 
 from rddp.tasks.base import OptimalControlProblem
@@ -73,3 +77,61 @@ class DatasetGenerator:
         self.prob = prob
         self.langevin_options = langevin_options
         self.datagen_options = datagen_options
+
+    def estimate_noised_score(
+        self,
+        x0: jnp.ndarray,
+        controls: jnp.ndarray,
+        sigma: float,
+        rng: jax.random.PRNGKey,
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Estimate the noised score s = σ² ∇ log pₖ(U | x₀) with M rollouts.
+
+        The score of the noised target distribution
+
+            pₖ(U | x₀) = ∫ p(Ũ | x₀)N(Ũ;U,σₖ²)dŨ,
+            p(U | x₀) ∝ exp(-J(U | x₀) / λ),
+
+        is given by
+
+            σ² ∇ log pₖ(U | x₀) =
+                𝔼[exp(-J(Ũ | x₀) / λ)(Ũ - U)] / 𝔼[exp(-J(Ũ | x₀) / λ)],
+
+        where the expectation is under Ũ ~ 𝒩(U,σₖ²).
+
+        Args:
+            x0: The initial state x₀.
+            controls: The control sequence U = [u₀, u₁, ..., u_T₋₁].
+            sigma: The noise level σₖ.
+            rng: The random number generator key.
+
+        Returns:
+            The noised score estimate ŝ = σ² ∇ log pₖ(U | x₀).
+            The sampled control tapes Ũʲ, j = 1..M.
+            The importance weights wₖ(Ũʲ).
+        """
+        raise NotImplementedError
+
+    def generate_dataset(
+        self, rng: jax.random.PRNGKey
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Generate a dataset of noised score estimates from one initial state.
+
+        The procedure for doing so is as follows:
+          - Sample an initial state x₀
+          - Sample a control tape μ = [u₀, u₁, ..., u_T₋₁] ~ 𝒩(0, σ_L²)
+          - For each noise level k = L, L-1, ..., 0:
+              - Sample Uₖⁱ ~ 𝒩(μₖ, σₖ²), i = 1..N
+              - Estimate noised score ŝ = σₖ² ∇ log pₖ(Uₖⁱ | x₀) with M rollouts
+              - Add (x₀, Uₖⁱ, ŝ, k) to the dataset
+              - Update the mean control tape μₖ₋₁ = MPPI(Uₖⁱʲ)
+
+        By the end of this process, μ₀ should be close to a local optimum.
+
+        Args:
+            rng: The random number generator key.
+
+        Returns:
+            Dataset of states, controls, scores, and noise levels (x₀, U, ŝ, k).
+        """
+        raise NotImplementedError
