@@ -1,4 +1,6 @@
 import pickle
+import sys
+from typing import Tuple
 
 import jax
 import jax.numpy as jnp
@@ -66,13 +68,13 @@ def generate_dataset(save: bool = False) -> None:
     prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
         temperature=0.001,
-        num_noise_levels=100,
+        num_noise_levels=500,
         starting_noise_level=0.7,
-        noise_decay_rate=0.95,
+        noise_decay_rate=0.99,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=16,
-        num_data_points_per_initial_state=32,
+        num_initial_states=1024,
+        num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -95,7 +97,7 @@ def generate_dataset(save: bool = False) -> None:
     # Plot samples at certain noise levels
     fig, ax = plt.subplots(1, 5)
 
-    for i, k in enumerate([0, 25, 50, 75, 99]):
+    for i, k in enumerate([0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]):
         plt.sca(ax[i])
         prob.plot_scenario()
         sigma = sigma_L * gamma ** (L - k - 1)
@@ -220,21 +222,6 @@ def deploy_trained_model() -> None:
     x0 = jnp.array([-0.1, -1.5])
     prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
 
-    # DEBUG: manually estimate the score 
-    langevin_options = AnnealedLangevinOptions(
-        temperature=0.001,
-        num_noise_levels=100,
-        starting_noise_level=0.7,
-        noise_decay_rate=0.95,
-    )
-    gen_options = DatasetGenerationOptions(
-        num_initial_states=16,
-        num_data_points_per_initial_state=32,
-        num_rollouts_per_data_point=64,
-    )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
-    jit_score = jax.jit(generator.estimate_noised_score)
-
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
         data = pickle.load(f)
@@ -243,32 +230,35 @@ def deploy_trained_model() -> None:
     options = data["options"]
 
     # Do annealed langevin sampling
-    #L = options.num_noise_levels
-    L = 300
+    L = options.num_noise_levels
     sigma = options.starting_noise_level
-    eps = 0.01
+    eps = 0.001
 
     rng, init_rng = jax.random.split(rng)
     U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
 
+    jit_cost = jax.jit(prob.total_cost)
+
+    def update_sample(carry: Tuple, i: int):
+        """Scannable function for Langevin sampling."""
+        U, k, sigma, rng = carry
+        rng, noise_rng = jax.random.split(rng)
+        z = jax.random.normal(noise_rng, U.shape)
+        score = net.apply(params, x0, U, k)
+        U = U + eps * score + jnp.sqrt(2 * eps * sigma**2) * z
+        return (U, k, sigma, rng), None
+
     for k in range(L - 1, -1, -1):
-        cost = prob.total_cost(U, x0)
-        print(f"k = {k}, cost = {cost}")
+        # Langevin sampling at the current noise level
+        (U, _, _, rng), _ = jax.lax.scan(
+            update_sample, (U, jnp.array([k]), sigma, rng), jnp.arange(5)
+        )
 
-        for _ in range(20):
-            # Langevin sampling at this noise level
-            rng, noise_rng = jax.random.split(rng)
-            z = jax.random.normal(noise_rng, U.shape)
+        # Reduce the noise level
+        sigma *= options.noise_decay_rate
 
-            rng, score_rng = jax.random.split(rng)
-            score = jit_score(x0, U, sigma, score_rng)
-            #score = net.apply(params, x0, U, jnp.array([k]))
-
-            U = U + eps * score# + jnp.sqrt(2 * eps * sigma**2) * z
-
-        # Anneal the noise
-        #sigma *= options.noise_decay_rate
-        sigma *= 0.99
+        if k % 50 == 0 or k == L - 1:
+            print(f"k={k}, cost={jit_cost(U, x0)}")
 
     plt.figure()
     X = prob.sys.rollout(U, x0)
@@ -280,7 +270,20 @@ def deploy_trained_model() -> None:
 
 
 if __name__ == "__main__":
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy]"
+    num_args = 1
+    if len(sys.argv) != num_args + 1:
+        print(usage)
+        sys.exit(1)
+
+    if sys.argv[1] == "generate":
+        generate_dataset(save=True)
+    elif sys.argv[1] == "fit":
+        fit_score_model()
+    elif sys.argv[1] == "deploy":
+        deploy_trained_model()
+    else:
+        print(usage)
+        sys.exit(1)
+
     # solve_with_gradient_descent()
-    # generate_dataset(save=True)
-    # fit_score_model()
-    deploy_trained_model()
