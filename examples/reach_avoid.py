@@ -136,6 +136,7 @@ def fit_score_model() -> None:
         data = pickle.load(f)
     dataset = data["dataset"]
     dataset = dataset.replace(k=dataset.k.reshape(-1, 1))  # TODO: fix earlier
+    options = data["langevin_options"]
 
     # Split the data into training and validation sets
     rng, split_rng = jax.random.split(rng)
@@ -204,8 +205,62 @@ def fit_score_model() -> None:
             )
             print(f"Step {iter}, loss {loss:.4f}, val loss {val_loss:.4f}")
 
+    # Save the trained model and parameters
+    fname = "/tmp/reach_avoid_score_model.pkl"
+    with open(fname, "wb") as f:
+        pickle.dump({"params": params, "net": net, "options": options}, f)
+
+
+def deploy_trained_model() -> None:
+    """Use the trained model to generate optimal actions."""
+    rng = jax.random.PRNGKey(0)
+
+    # Set up the system
+    x0 = jnp.array([-0.1, -1.5])
+    prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
+
+    # Load the trained score network
+    with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
+        data = pickle.load(f)
+    params = data["params"]
+    net = data["net"]
+    options = data["options"]
+
+    # Do annealed langevin sampling
+    L = options.num_noise_levels
+    sigma = options.starting_noise_level
+    eps = 0.001
+
+    rng, init_rng = jax.random.split(rng)
+    U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
+
+    for k in range(L - 1, -1, -1):
+        cost = prob.total_cost(U, x0)
+        print(f"k = {k}, cost = {cost}")
+
+        for _ in range(20):
+            # Langevin sampling at this noise level
+            rng, noise_rng = jax.random.split(rng)
+            z = jax.random.normal(noise_rng, U.shape)
+            score = net.apply(params, x0, U, jnp.array([k]))
+            U = U + eps * score + jnp.sqrt(2 * eps * sigma**2) * z
+
+        # Plot stuff every now and then
+        if k % 20 == 0:
+            plt.figure()
+            X = prob.sys.rollout(U, x0)
+            prob.plot_scenario()
+            plt.plot(X[:, 0], X[:, 1], "o-")
+            plt.title(f"k={k}, σₖ={sigma:.4f}")
+
+        # Anneal the noise
+        sigma *= options.noise_decay_rate
+
+    plt.show()
+
 
 if __name__ == "__main__":
     # solve_with_gradient_descent()
     # generate_dataset(save=True)
-    fit_score_model()
+    # fit_score_model()
+    deploy_trained_model()
