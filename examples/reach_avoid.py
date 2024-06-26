@@ -67,12 +67,12 @@ def generate_dataset(save: bool = False) -> None:
     langevin_options = AnnealedLangevinOptions(
         temperature=0.001,
         num_noise_levels=100,
-        starting_noise_level=1.0,
+        starting_noise_level=0.7,
         noise_decay_rate=0.95,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=5,
-        num_data_points_per_initial_state=16,
+        num_initial_states=16,
+        num_data_points_per_initial_state=32,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -156,7 +156,7 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_k)
 
     # Learning parameters
-    iterations = 2000
+    iterations = 10_000
     batch_size = 256
     learning_rate = 1e-3
 
@@ -209,6 +209,7 @@ def fit_score_model() -> None:
     fname = "/tmp/reach_avoid_score_model.pkl"
     with open(fname, "wb") as f:
         pickle.dump({"params": params, "net": net, "options": options}, f)
+    print(f"Saved trained model to {fname}")
 
 
 def deploy_trained_model() -> None:
@@ -219,6 +220,21 @@ def deploy_trained_model() -> None:
     x0 = jnp.array([-0.1, -1.5])
     prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
 
+    # DEBUG: manually estimate the score 
+    langevin_options = AnnealedLangevinOptions(
+        temperature=0.001,
+        num_noise_levels=100,
+        starting_noise_level=0.7,
+        noise_decay_rate=0.95,
+    )
+    gen_options = DatasetGenerationOptions(
+        num_initial_states=16,
+        num_data_points_per_initial_state=32,
+        num_rollouts_per_data_point=64,
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+    jit_score = jax.jit(generator.estimate_noised_score)
+
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
         data = pickle.load(f)
@@ -227,9 +243,10 @@ def deploy_trained_model() -> None:
     options = data["options"]
 
     # Do annealed langevin sampling
-    L = options.num_noise_levels
+    #L = options.num_noise_levels
+    L = 300
     sigma = options.starting_noise_level
-    eps = 0.001
+    eps = 0.01
 
     rng, init_rng = jax.random.split(rng)
     U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
@@ -242,19 +259,22 @@ def deploy_trained_model() -> None:
             # Langevin sampling at this noise level
             rng, noise_rng = jax.random.split(rng)
             z = jax.random.normal(noise_rng, U.shape)
-            score = net.apply(params, x0, U, jnp.array([k]))
-            U = U + eps * score + jnp.sqrt(2 * eps * sigma**2) * z
 
-        # Plot stuff every now and then
-        if k % 20 == 0:
-            plt.figure()
-            X = prob.sys.rollout(U, x0)
-            prob.plot_scenario()
-            plt.plot(X[:, 0], X[:, 1], "o-")
-            plt.title(f"k={k}, σₖ={sigma:.4f}")
+            rng, score_rng = jax.random.split(rng)
+            score = jit_score(x0, U, sigma, score_rng)
+            #score = net.apply(params, x0, U, jnp.array([k]))
+
+            U = U + eps * score# + jnp.sqrt(2 * eps * sigma**2) * z
 
         # Anneal the noise
-        sigma *= options.noise_decay_rate
+        #sigma *= options.noise_decay_rate
+        sigma *= 0.99
+
+    plt.figure()
+    X = prob.sys.rollout(U, x0)
+    prob.plot_scenario()
+    plt.plot(X[:, 0], X[:, 1], "o-")
+    plt.title(f"k={k}, σₖ={sigma:.4f}")
 
     plt.show()
 
