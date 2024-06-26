@@ -60,19 +60,19 @@ def solve_with_gradient_descent(
 def plot_dataset() -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
-    x0 = jnp.array([0.1, -1.5])
+    x0 = jnp.array([-0.1, -1.5])
 
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
+        temperature=0.001,
         num_noise_levels=100,
         starting_noise_level=1.0,
         noise_decay_rate=0.95,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=3,
-        num_data_points_per_initial_state=4,
+        num_initial_states=5,
+        num_data_points_per_initial_state=16,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -101,6 +101,21 @@ def plot_dataset() -> None:
         px = Xs[:, :, 0].T
         py = Xs[:, :, 1].T
         ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
+
+    # Plot cost at each iteration
+    plt.figure()
+
+    jit_cost = jax.jit(jax.vmap(prob.total_cost))
+    for k in range(L):
+        iter = L - k
+        idxs = jnp.where(dataset.k == k)
+        Us = dataset.U[idxs]
+        x0s = dataset.x0[idxs]
+        costs = jit_cost(Us, x0s)
+        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
+    plt.xlabel("Iteration (L - k)")
+    plt.ylabel("Cost J(U, x₀)")
+    plt.yscale("log")
 
     plt.show()
 
