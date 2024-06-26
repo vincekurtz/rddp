@@ -51,6 +51,23 @@ class DatasetGenerationOptions:
     num_rollouts_per_data_point: int
 
 
+@dataclass
+class DiffusionDataset:
+    """Training data for a diffusion policy.
+
+    Attributes:
+        x0: The initial state x₀.
+        U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
+        s: The noised score estimate ŝ = σₖ² ∇ log pₖ(U | x₀).
+        k: The noise level index k.
+    """
+
+    x0: jnp.ndarray
+    U: jnp.ndarray
+    s: jnp.ndarray
+    k: jnp.ndarray
+
+
 class DatasetGenerator:
     """Generate a diffusion policy dataset for score function learning.
 
@@ -135,7 +152,7 @@ class DatasetGenerator:
 
     def generate_from_state(
         self, x0: jnp.ndarray, rng: jax.random.PRNGKey
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> DiffusionDataset:
         """Generate a dataset of noised score estimates from one initial state.
 
         Starting from initial state x₀:
@@ -194,15 +211,13 @@ class DatasetGenerator:
             return (mu, sigma, rng), dataset
 
         rng, rollouts_rng = jax.random.split(rng)
-        _, dataset = jax.lax.scan(
+        _, (x0, U, s, k) = jax.lax.scan(
             scan_fn, (muL, sigmaL, rollouts_rng), jnp.arange(L - 1, -1, -1)
         )
 
-        return dataset
+        return DiffusionDataset(x0, U, s, k)
 
-    def generate(
-        self, rng: jax.random.PRNGKey
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def generate(self, rng: jax.random.PRNGKey) -> DiffusionDataset:
         """Generate a dataset of noised score estimates, (x₀, U, ŝ, k).
 
         Data is generated for various initial conditions and noise levels, but
@@ -227,12 +242,11 @@ class DatasetGenerator:
         gen_rng = jax.random.split(
             gen_rng, self.datagen_options.num_initial_states
         )
-        x0, U, s, k = jax.vmap(self.generate_from_state)(x0s, gen_rng)
+        stacked_data = jax.vmap(self.generate_from_state)(x0s, gen_rng)
 
         # Flatten the data across initial states, noise levels, and data points.
-        x0 = jnp.reshape(x0, (-1, *x0.shape[3:]))
-        U = jnp.reshape(U, (-1, *U.shape[3:]))
-        s = jnp.reshape(s, (-1, *s.shape[3:]))
-        k = jnp.reshape(k, (-1, *k.shape[3:]))
+        flat_data = jax.tree.map(
+            lambda x: jnp.reshape(x, (-1, *x.shape[3:])), stacked_data
+        )
 
-        return x0, U, s, k
+        return flat_data

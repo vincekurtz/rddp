@@ -11,6 +11,24 @@ from rddp.tasks.base import OptimalControlProblem
 from rddp.tasks.reach_avoid import ReachAvoid
 
 
+class ReachAvoidFixedX0(ReachAvoid):
+    """A reach-avoid problem with a fixed initial state."""
+
+    def __init__(self, num_steps: int, start_state: jnp.ndarray):
+        """Initialize the reach-avoid problem.
+
+        Args:
+            num_steps: The number of time steps T.
+            start_state: The initial state x0.
+        """
+        super().__init__(num_steps)
+        self.x0 = start_state
+
+    def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
+        """Sample the initial state x₀."""
+        return self.x0
+
+
 def solve_with_gradient_descent(
     prob: OptimalControlProblem, x0: jnp.ndarray
 ) -> jnp.ndarray:
@@ -45,7 +63,7 @@ def plot_dataset() -> None:
     x0 = jnp.array([0.1, -1.5])
 
     # Problem setup
-    prob = ReachAvoid(num_steps=20)
+    prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
         temperature=0.01,
         num_noise_levels=100,
@@ -53,50 +71,36 @@ def plot_dataset() -> None:
         noise_decay_rate=0.95,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=1,
-        num_data_points_per_initial_state=16,
+        num_initial_states=3,
+        num_data_points_per_initial_state=4,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate some data
     rng, gen_rng = jax.random.split(rng)
-    (x0s, Us, scores, ks) = generator.generate_from_state(x0, gen_rng)
-
-    print("x0:", x0s.shape)
-    print("U:", Us.shape)
-    print("s:", scores.shape)
-    print("k:", ks.shape)
+    dataset = generator.generate(gen_rng)
 
     # Make some plots
     gamma = langevin_options.noise_decay_rate
     sigma_L = langevin_options.starting_noise_level
+    L = langevin_options.num_noise_levels
 
     # Plot samples at certain noise levels
-    fig, ax = plt.subplots(1, 4)
+    fig, ax = plt.subplots(1, 5)
 
-    for i, k in enumerate([0, 25, 50, 75]):
+    for i, k in enumerate([0, 25, 50, 75, 99]):
         plt.sca(ax[i])
         prob.plot_scenario()
-        ax[i].set_title(f"Noise level {k}")
-        Xs = jax.vmap(prob.sys.rollout)(Us[k], x0s[k])
+        sigma = sigma_L * gamma ** (L - k - 1)
+        ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
+        idxs = jnp.where(dataset.k == k)
+        Us = dataset.U[idxs]
+        x0s = dataset.x0[idxs]
+        Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
         px = Xs[:, :, 0].T
         py = Xs[:, :, 1].T
         ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
-
-    # Plot costs over iterations
-    fig, ax = plt.subplots(2, 1, sharex=True)
-    iters = langevin_options.num_noise_levels - ks
-    costs = jax.vmap(jax.vmap(prob.total_cost))(Us, x0s)
-    noise_levels = sigma_L * gamma**iters
-
-    ax[0].scatter(iters, costs, c="blue", alpha=0.5)
-    ax[0].set_ylabel("Cost")
-    ax[1].scatter(iters, noise_levels, c="red", alpha=0.5)
-    ax[1].set_ylabel("Noise level")
-    ax[1].set_xlabel("Iteration")
-
-    print("Averge final cost:", jnp.mean(costs[-1]))
 
     plt.show()
 

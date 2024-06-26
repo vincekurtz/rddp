@@ -5,6 +5,7 @@ from rddp.data_generation import (
     AnnealedLangevinOptions,
     DatasetGenerationOptions,
     DatasetGenerator,
+    DiffusionDataset,
 )
 from rddp.tasks.reach_avoid import ReachAvoid
 
@@ -70,18 +71,19 @@ def test_gen_from_state() -> None:
 
     # Generate the dataset
     rng, gen_rng = jax.random.split(rng)
-    (x0s, Us, scores, ks) = generator.generate_from_state(x0, gen_rng)
+    dataset = generator.generate_from_state(x0, gen_rng)
+    assert isinstance(dataset, DiffusionDataset)
 
     # Check sizes
     L = langevin_options.num_noise_levels
     N = gen_options.num_data_points_per_initial_state
-    assert x0s.shape == (L, N, 2)
-    assert Us.shape == (L, N, prob.num_steps - 1, 2)
-    assert scores.shape == (L, N, prob.num_steps - 1, 2)
-    assert ks.shape == (L, N)
+    assert dataset.x0.shape == (L, N, 2)
+    assert dataset.U.shape == (L, N, prob.num_steps - 1, 2)
+    assert dataset.s.shape == (L, N, prob.num_steps - 1, 2)
+    assert dataset.k.shape == (L, N)
 
     # Check that the costs decreased
-    costs = jax.vmap(jax.vmap(prob.total_cost))(Us, x0s)
+    costs = jax.vmap(jax.vmap(prob.total_cost))(dataset.U, dataset.x0)
     start_costs = costs[0, ...]
     final_costs = costs[-1, ...]
     assert jnp.all(final_costs < start_costs)
@@ -106,20 +108,20 @@ def test_generate() -> None:
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     rng, gen_rng = jax.random.split(rng)
-    x0, U, s, k = generator.generate(gen_rng)
+    dataset = generator.generate(gen_rng)
+    assert isinstance(dataset, DiffusionDataset)
 
     # Check sizes
     Nx = gen_options.num_initial_states
     L = langevin_options.num_noise_levels
     N = gen_options.num_data_points_per_initial_state
 
-    assert x0.shape == (Nx * L * N, 2)
-    assert U.shape == (Nx * L * N, prob.num_steps - 1, 2)
-    assert s.shape == (Nx * L * N, prob.num_steps - 1, 2)
-    assert k.shape == (Nx * L * N,)
+    assert dataset.x0.shape == (Nx * L * N, 2)
+    assert dataset.U.shape == (Nx * L * N, prob.num_steps - 1, 2)
+    assert dataset.s.shape == (Nx * L * N, prob.num_steps - 1, 2)
+    assert dataset.k.shape == (Nx * L * N,)
 
 
 if __name__ == "__main__":
     test_score_estimate()
     test_gen_from_state()
-    test_generate()
