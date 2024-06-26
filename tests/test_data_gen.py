@@ -1,3 +1,6 @@
+import pickle
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 
@@ -122,6 +125,55 @@ def test_generate() -> None:
     assert dataset.k.shape == (Nx * L * N,)
 
 
+def test_save_and_load() -> None:
+    """Test saving and loading a dataset."""
+    prob = ReachAvoid(num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        temperature=0.01,
+        num_noise_levels=250,
+        starting_noise_level=0.1,
+        noise_decay_rate=0.97,
+    )
+    gen_options = DatasetGenerationOptions(
+        num_initial_states=3,
+        num_data_points_per_initial_state=8,
+        num_rollouts_per_data_point=12,
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+
+    # Create a dummy dataset
+    rng = jax.random.PRNGKey(0)
+    rng, x0_rng, U_rng, s_rng, k_rng = jax.random.split(rng, 5)
+    x0 = jax.random.normal(x0_rng, (8, 2))
+    U = jax.random.normal(U_rng, (8, 19, 2))
+    s = jax.random.normal(s_rng, (8, 19, 2))
+    k = jax.random.randint(k_rng, (8,), 0, 250)
+    dataset = DiffusionDataset(x0, U, s, k)
+
+    # Create a temporary directory
+    local_dir = Path("_test_save_dataset")
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the dataset
+    generator.save_dataset(dataset, local_dir / "dataset.pkl")
+
+    # Load the dataset
+    with open(local_dir / "dataset.pkl", "rb") as f:
+        loaded = pickle.load(f)
+    loaded_dataset = loaded["dataset"]
+    loaded_options = loaded["langevin_options"]
+
+    assert isinstance(loaded_dataset, DiffusionDataset)
+    assert isinstance(loaded_options, AnnealedLangevinOptions)
+
+    # Remove the temporary directory
+    for p in local_dir.iterdir():
+        p.unlink()
+    local_dir.rmdir()
+
+
 if __name__ == "__main__":
     test_score_estimate()
     test_gen_from_state()
+    test_generate()
+    test_save_and_load()

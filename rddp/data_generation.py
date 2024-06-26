@@ -1,3 +1,4 @@
+import pickle
 from typing import Tuple
 
 import jax
@@ -250,3 +251,17 @@ class DatasetGenerator:
         )
 
         return flat_data
+
+    def save_dataset(self, dataset: DiffusionDataset, path: str) -> None:
+        """Save a training dataset to a file.
+
+        Note that this also saves the annealed langevin options, which are
+        needed for depolying a trained score model.
+
+        Args:
+            dataset: The dataset to save.
+            path: The path to save the dataset to.
+        """
+        data = {"dataset": dataset, "langevin_options": self.langevin_options}
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
