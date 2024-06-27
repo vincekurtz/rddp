@@ -16,7 +16,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 6
+HORIZON = 7
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -168,7 +168,7 @@ def fit_score_model() -> None:
 
     # Learning hyper-parameters
     epochs = 1000
-    batch_size = 256
+    batch_size = 128
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
 
