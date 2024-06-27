@@ -36,7 +36,7 @@ class ReachAvoidFixedX0(ReachAvoid):
 
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    prob = ReachAvoid(num_steps=20)
+    prob = ReachAvoid(num_steps=4)
     x0 = jnp.array([0.1, -1.5])
 
     cost_and_grad = jax.jit(
@@ -59,21 +59,21 @@ def solve_with_gradient_descent() -> None:
     plt.show()
 
 
-def generate_dataset(save: bool = False) -> None:
+def generate_dataset(save: bool = False, plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
     x0 = jnp.array([-0.1, -1.5])
 
     # Problem setup
-    prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
+    prob = ReachAvoidFixedX0(num_steps=4, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.001,
-        num_noise_levels=500,
-        starting_noise_level=0.7,
-        noise_decay_rate=0.99,
+        temperature=0.01,
+        num_noise_levels=100,
+        starting_noise_level=1.0,
+        noise_decay_rate=0.95,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=32,
+        num_initial_states=16,
         num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
@@ -89,48 +89,53 @@ def generate_dataset(save: bool = False) -> None:
         generator.save_dataset(dataset, fname)
         print(f"Saved dataset to {fname}")
 
-    # Make some plots
-    gamma = langevin_options.noise_decay_rate
-    sigma_L = langevin_options.starting_noise_level
-    L = langevin_options.num_noise_levels
+    # Make some plots if requested
+    if plot:
+        gamma = langevin_options.noise_decay_rate
+        sigma_L = langevin_options.starting_noise_level
+        L = langevin_options.num_noise_levels
 
-    # Plot samples at certain noise levels
-    fig, ax = plt.subplots(1, 5)
+        # Plot samples at certain noise levels
+        fig, ax = plt.subplots(1, 5)
 
-    for i, k in enumerate([0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]):
-        plt.sca(ax[i])
-        prob.plot_scenario()
-        sigma = sigma_L * gamma ** (L - k - 1)
-        ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-        idxs = jnp.where(dataset.k == k)[0]
-        assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
-        Us = dataset.U[idxs]
-        x0s = dataset.x0[idxs]
-        Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
-        px = Xs[:, :, 0].T
-        py = Xs[:, :, 1].T
-        ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
+        for i, k in enumerate(
+            [0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]
+        ):
+            plt.sca(ax[i])
+            prob.plot_scenario()
+            sigma = sigma_L * gamma ** (L - k - 1)
+            ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
+            idxs = jnp.where(dataset.k == k)[0]
+            assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
+            Us = dataset.U[idxs]
+            x0s = dataset.x0[idxs]
+            Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
+            px = Xs[:, :, 0].T
+            py = Xs[:, :, 1].T
+            ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
 
-    # Plot cost at each iteration
-    plt.figure()
+        # Plot cost at each iteration
+        plt.figure()
 
-    jit_cost = jax.jit(jax.vmap(prob.total_cost))
-    for k in range(L):
-        iter = L - k
-        idxs = jnp.where(dataset.k == k)
-        Us = dataset.U[idxs]
-        x0s = dataset.x0[idxs]
-        costs = jit_cost(Us, x0s)
-        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
-    plt.xlabel("Iteration (L - k)")
-    plt.ylabel("Cost J(U, x₀)")
-    plt.yscale("log")
+        jit_cost = jax.jit(jax.vmap(prob.total_cost))
+        for k in range(L):
+            iter = L - k
+            idxs = jnp.where(dataset.k == k)
+            Us = dataset.U[idxs]
+            x0s = dataset.x0[idxs]
+            costs = jit_cost(Us, x0s)
+            plt.scatter(
+                jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5
+            )
+        plt.xlabel("Iteration (L - k)")
+        plt.ylabel("Cost J(U, x₀)")
+        plt.yscale("log")
 
-    plt.show()
+        plt.show()
 
 
 def fit_score_model() -> None:
-    """Fit a simple scor32e model to the generated data."""
+    """Fit a simple score model to the generated data."""
     rng = jax.random.PRNGKey(0)
 
     # Load training data from a file (must run generate_dataset first)
@@ -152,13 +157,13 @@ def fit_score_model() -> None:
     # Initialize the score model
     net = DiffusionPolicyMLP(layer_sizes=[128, 128])
     dummy_x0 = jnp.zeros((2,))
-    dummy_U = jnp.zeros((19, 2))
+    dummy_U = jnp.zeros((3, 2))  # TODO: infer sizes from dataset
     dummy_sigma = jnp.zeros((1,))
     rng, params_rng = jax.random.split(rng)
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    iterations = 50_000
+    iterations = 5000
     batch_size = 256
     learning_rate = 1e-3
 
@@ -216,11 +221,12 @@ def fit_score_model() -> None:
 
 def deploy_trained_model() -> None:
     """Use the trained model to generate optimal actions."""
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(3)
 
     # Set up the system
+    # TODO: infer planning horizon from the dataset
     x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=20, start_state=x0)
+    prob = ReachAvoidFixedX0(num_steps=4, start_state=x0)
 
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
@@ -244,7 +250,7 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        eps = 0.001 * sigma**2
+        eps = 0.01 * sigma**2
         U = U + eps * score + 0.0 * jnp.sqrt(2 * eps) * z
         return (U, sigma, rng), None
 
@@ -257,7 +263,7 @@ def deploy_trained_model() -> None:
         # Reduce the noise level
         sigma *= options.noise_decay_rate
 
-        if k % 50 == 0 or k == L - 1:
+        if k % 10 == 0 or k == L - 1:
             print(f"k={k}, cost={jit_cost(U, x0)}")
 
     plt.figure()
@@ -270,20 +276,20 @@ def deploy_trained_model() -> None:
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy]"
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gradient]"
     num_args = 1
     if len(sys.argv) != num_args + 1:
         print(usage)
         sys.exit(1)
 
     if sys.argv[1] == "generate":
-        generate_dataset(save=True)
+        generate_dataset(save=True, plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
         deploy_trained_model()
+    elif sys.argv[1] == "gradient":
+        solve_with_gradient_descent()
     else:
         print(usage)
         sys.exit(1)
-
-    # solve_with_gradient_descent()
