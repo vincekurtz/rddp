@@ -240,15 +240,6 @@ def deploy_trained_model() -> None:
     net = data["net"]
     options = data["options"]
 
-    # Do annealed langevin sampling
-    L = options.num_noise_levels
-    sigma = options.starting_noise_level
-
-    rng, init_rng = jax.random.split(rng)
-    U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
-
-    jit_cost = jax.jit(prob.total_cost)
-
     def update_sample(carry: Tuple, i: int):
         """Scannable function for Langevin sampling."""
         U, sigma, rng = carry
@@ -259,24 +250,40 @@ def deploy_trained_model() -> None:
         U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
-    for k in range(L - 1, -1, -1):
-        # Langevin sampling at the current noise level
-        (U, _, rng), _ = jax.lax.scan(
-            update_sample, (U, sigma, rng), jnp.arange(50)
-        )
+    def generate_control_tape(rng: jax.random.PRNGKey):
+        """Generate an optimal control sequence from scratch."""
+        sigma = options.starting_noise_level
 
-        # Reduce the noise level
-        sigma *= options.noise_decay_rate
+        rng, init_rng, sample_rng = jax.random.split(rng, 3)
+        U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
 
-        if k % 10 == 0 or k == L - 1:
-            print(f"k={k}, cost={jit_cost(U, x0)}")
+        for _ in range(options.num_noise_levels - 1, -1, -1):
+            # Do langevin sampling
+            (U, _, rng), _ = jax.lax.scan(
+                update_sample, (U, sigma, rng), jnp.arange(50)
+            )
 
+            # Anneal the noise
+            sigma *= options.noise_decay_rate
+        return U
+
+    # Do annealed langevin sampling
+    num_samples = 32
+
+    rng, gen_rng = jax.random.split(rng)
+    gen_rng = jax.random.split(gen_rng, num_samples)
+    Us = jax.vmap(generate_control_tape)(gen_rng)
+
+    # Compute cost and state trajectories
+    costs = jax.jit(jax.vmap(prob.total_cost, in_axes=(0, None)))(Us, x0)
+    Xs = jax.jit(jax.vmap(prob.sys.rollout, in_axes=(0, None)))(Us, x0)
+    print(f"Costs: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
+
+    # Plot the sampled trajectories
     plt.figure()
-    X = prob.sys.rollout(U, x0)
     prob.plot_scenario()
-    plt.plot(X[:, 0], X[:, 1], "o-")
-    plt.title(f"k={k}, σₖ={sigma:.4f}")
-
+    for i in range(num_samples):
+        plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
     plt.show()
 
 
