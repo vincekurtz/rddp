@@ -16,7 +16,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 3
+HORIZON = 5
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -70,7 +70,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
+        temperature=0.001,
         num_noise_levels=150,
         starting_noise_level=1.0,
         noise_decay_rate=0.97,
@@ -159,7 +159,7 @@ def fit_score_model() -> None:
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
     # Initialize the score model
-    net = DiffusionPolicyMLP(layer_sizes=[32, 32])
+    net = DiffusionPolicyMLP(layer_sizes=[128, 128])
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
@@ -167,7 +167,7 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 5000
+    epochs = 1000
     batch_size = 256
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
@@ -251,7 +251,7 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        alpha = 0.001 * sigma**2
+        alpha = 0.01 * sigma**2
         U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
@@ -262,10 +262,11 @@ def deploy_trained_model() -> None:
         rng, init_rng, sample_rng = jax.random.split(rng, 3)
         U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
 
-        for _ in range(options.num_noise_levels - 1, -1, -1):
+        L = options.num_noise_levels
+        for _ in range(L - 1, -1, -1):
             # Do langevin sampling
             (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(200)
+                update_sample, (U, sigma, rng), jnp.arange(100)
             )
 
             # Anneal the noise
