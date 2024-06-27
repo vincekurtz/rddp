@@ -15,6 +15,9 @@ from rddp.data_generation import (
 )
 from rddp.tasks.reach_avoid import ReachAvoid
 
+# Global planning horizon definition
+HORIZON = 5
+
 
 class ReachAvoidFixedX0(ReachAvoid):
     """A reach-avoid problem with a fixed initial state."""
@@ -36,7 +39,7 @@ class ReachAvoidFixedX0(ReachAvoid):
 
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    prob = ReachAvoid(num_steps=4)
+    prob = ReachAvoid(num_steps=HORIZON)
     x0 = jnp.array([0.1, -1.5])
 
     cost_and_grad = jax.jit(
@@ -65,15 +68,15 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     x0 = jnp.array([-0.1, -1.5])
 
     # Problem setup
-    prob = ReachAvoidFixedX0(num_steps=4, start_state=x0)
+    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
-        num_noise_levels=100,
-        starting_noise_level=1.0,
-        noise_decay_rate=0.95,
+        temperature=0.001,
+        num_noise_levels=150,
+        starting_noise_level=0.5,
+        noise_decay_rate=0.97,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=16,
+        num_initial_states=128,
         num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
@@ -154,16 +157,19 @@ def fit_score_model() -> None:
     train_dataset = jax.tree.map(lambda x: x[train_idxs], dataset)
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
+    print("Training dataset size:", train_dataset.x0.shape)
+    print("Validation dataset size:", val_dataset.x0.shape)
+
     # Initialize the score model
     net = DiffusionPolicyMLP(layer_sizes=[128, 128])
     dummy_x0 = jnp.zeros((2,))
-    dummy_U = jnp.zeros((3, 2))  # TODO: infer sizes from dataset
+    dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
     rng, params_rng = jax.random.split(rng)
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    iterations = 5000
+    iterations = 50_000
     batch_size = 256
     learning_rate = 1e-3
 
@@ -221,12 +227,11 @@ def fit_score_model() -> None:
 
 def deploy_trained_model() -> None:
     """Use the trained model to generate optimal actions."""
-    rng = jax.random.PRNGKey(3)
+    rng = jax.random.PRNGKey(0)
 
     # Set up the system
-    # TODO: infer planning horizon from the dataset
     x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=4, start_state=x0)
+    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
 
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
@@ -250,8 +255,8 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        eps = 0.01 * sigma**2
-        U = U + eps * score + 0.0 * jnp.sqrt(2 * eps) * z
+        alpha = 0.01 * sigma**2
+        U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
     for k in range(L - 1, -1, -1):
@@ -276,7 +281,7 @@ def deploy_trained_model() -> None:
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gradient]"
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd]"
     num_args = 1
     if len(sys.argv) != num_args + 1:
         print(usage)
@@ -288,7 +293,7 @@ if __name__ == "__main__":
         fit_score_model()
     elif sys.argv[1] == "deploy":
         deploy_trained_model()
-    elif sys.argv[1] == "gradient":
+    elif sys.argv[1] == "gd":
         solve_with_gradient_descent()
     else:
         print(usage)
