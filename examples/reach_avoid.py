@@ -16,7 +16,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 5
+HORIZON = 3
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -72,12 +72,12 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     langevin_options = AnnealedLangevinOptions(
         temperature=0.001,
         num_noise_levels=150,
-        starting_noise_level=0.5,
+        starting_noise_level=1.0,
         noise_decay_rate=0.97,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=128,
-        num_data_points_per_initial_state=64,
+        num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -109,6 +109,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
             sigma = sigma_L * gamma ** (L - k - 1)
             ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
             idxs = jnp.where(dataset.k == k)[0]
+            idxs = idxs[0 : min(32, len(idxs))]
             assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
@@ -123,7 +124,8 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         jit_cost = jax.jit(jax.vmap(prob.total_cost))
         for k in range(L):
             iter = L - k
-            idxs = jnp.where(dataset.k == k)
+            idxs = jnp.where(dataset.k == k)[0]
+            idxs = idxs[0 : min(32, len(idxs))]
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
             costs = jit_cost(Us, x0s)
@@ -157,7 +159,7 @@ def fit_score_model() -> None:
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
     # Initialize the score model
-    net = DiffusionPolicyMLP(layer_sizes=[128, 128])
+    net = DiffusionPolicyMLP(layer_sizes=[32, 32])
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
@@ -165,10 +167,10 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 100
-    batch_size = 256
+    epochs = 500
+    batch_size = 128
     batches_per_epoch = len(train_dataset.x0) // batch_size
-    learning_rate = 1e-3
+    learning_rate = 1e-2
 
     print("  Training dataset size:", train_dataset.x0.shape)
     print("  Validation dataset size:", val_dataset.x0.shape)
@@ -181,7 +183,10 @@ def fit_score_model() -> None:
     def loss_fn(params, x0, U, sigma, s):  # noqa: ANN001, N803 (ingore annotations)
         """Loss function for score model training."""
         s_pred = net.apply(params, x0, U, sigma)
-        return jnp.mean(jnp.square(s_pred - s))
+        err = jnp.square(s_pred - s)
+        multiplier = (sigma**2).flatten()
+        err = jnp.einsum("i,i...->i...", multiplier, err)
+        return jnp.mean(err)
 
     loss_and_grad = jax.value_and_grad(loss_fn)
     jit_loss = jax.jit(loss_fn)
