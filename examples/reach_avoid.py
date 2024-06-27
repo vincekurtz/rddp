@@ -77,7 +77,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=256,
-        num_data_points_per_initial_state=4,
+        num_data_points_per_initial_state=2,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -167,8 +167,8 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 1000
-    batch_size = 128
+    epochs = 500
+    batch_size = 512
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
 
@@ -257,7 +257,7 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        alpha = 0.01 * sigma**2
+        alpha = 0.1 * sigma**2
         U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
@@ -272,7 +272,7 @@ def deploy_trained_model() -> None:
         for _ in range(L - 1, -1, -1):
             # Do langevin sampling
             (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(100)
+                update_sample, (U, sigma, rng), jnp.arange(10)
             )
 
             # Anneal the noise
