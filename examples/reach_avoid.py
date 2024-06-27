@@ -77,7 +77,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=128,
-        num_data_points_per_initial_state=1,
+        num_data_points_per_initial_state=64,
         num_rollouts_per_data_point=64,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -142,8 +142,7 @@ def fit_score_model() -> None:
     rng = jax.random.PRNGKey(0)
 
     # Load training data from a file (must run generate_dataset first)
-    fname = "/tmp/reach_avoid_dataset.pkl"
-    with open(fname, "rb") as f:
+    with open("/tmp/reach_avoid_dataset.pkl", "rb") as f:
         data = pickle.load(f)
     dataset = data["dataset"]
     options = data["langevin_options"]
@@ -157,9 +156,6 @@ def fit_score_model() -> None:
     train_dataset = jax.tree.map(lambda x: x[train_idxs], dataset)
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
-    print("Training dataset size:", train_dataset.x0.shape)
-    print("Validation dataset size:", val_dataset.x0.shape)
-
     # Initialize the score model
     net = DiffusionPolicyMLP(layer_sizes=[128, 128])
     dummy_x0 = jnp.zeros((2,))
@@ -169,9 +165,14 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    iterations = 50_000
+    epochs = 100
     batch_size = 256
+    batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
+
+    print("  Training dataset size:", train_dataset.x0.shape)
+    print("  Validation dataset size:", val_dataset.x0.shape)
+    print("  Batches per epoch:", batches_per_epoch)
 
     # Training loop
     optimizer = optax.adam(learning_rate)
@@ -204,19 +205,19 @@ def fit_score_model() -> None:
 
         return params, opt_state, loss
 
-    for iter in range(iterations):
-        rng, batch_rng = jax.random.split(rng)
-        params, opt_state, loss = train_step(params, opt_state, batch_rng)
+    for epoch in range(epochs):
+        for _ in range(batches_per_epoch):
+            rng, batch_rng = jax.random.split(rng)
+            params, opt_state, loss = train_step(params, opt_state, batch_rng)
 
-        if iter % 500 == 0 or iter == iterations - 1:
-            val_loss = jit_loss(
-                params,
-                val_dataset.x0,
-                val_dataset.U,
-                val_dataset.sigma,
-                val_dataset.s,
-            )
-            print(f"Step {iter}, loss {loss:.4f}, val loss {val_loss:.4f}")
+        val_loss = jit_loss(
+            params,
+            val_dataset.x0,
+            val_dataset.U,
+            val_dataset.sigma,
+            val_dataset.s,
+        )
+        print(f"Epoch {epoch}, loss {loss:.4f}, val loss {val_loss:.4f}")
 
     # Save the trained model and parameters
     fname = "/tmp/reach_avoid_score_model.pkl"
@@ -246,7 +247,7 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        alpha = 0.01 * sigma**2
+        alpha = 0.001 * sigma**2
         U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
