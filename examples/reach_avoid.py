@@ -16,7 +16,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 5
+HORIZON = 6
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -76,7 +76,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         noise_decay_rate=0.97,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=128,
+        num_initial_states=256,
         num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
@@ -159,7 +159,7 @@ def fit_score_model() -> None:
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
     # Initialize the score model
-    net = DiffusionPolicyMLP(layer_sizes=[128, 128])
+    net = DiffusionPolicyMLP(layer_sizes=[64, 64])
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
@@ -184,7 +184,12 @@ def fit_score_model() -> None:
         """Loss function for score model training."""
         s_pred = net.apply(params, x0, U, sigma)
         err = jnp.square(s_pred - s)
+
+        # Weight the error by the noise level, as recommended by Song et al.
+        # Generative Modeling by Estimating Gradients of the Data Distribution,
+        # NeurIPS 2019.
         err = jnp.einsum("ij,i...->i...", sigma**2, err)
+
         return jnp.mean(err)
 
     loss_and_grad = jax.value_and_grad(loss_fn)
@@ -209,19 +214,20 @@ def fit_score_model() -> None:
 
         return params, opt_state, loss
 
-    for epoch in range(epochs):
+    for epoch in range(epochs + 1):
         for _ in range(batches_per_epoch):
             rng, batch_rng = jax.random.split(rng)
             params, opt_state, loss = train_step(params, opt_state, batch_rng)
 
-        val_loss = jit_loss(
-            params,
-            val_dataset.x0,
-            val_dataset.U,
-            val_dataset.sigma,
-            val_dataset.s,
-        )
-        print(f"Epoch {epoch}, loss {loss:.4f}, val loss {val_loss:.4f}")
+        if epoch % 100 == 0:
+            val_loss = jit_loss(
+                params,
+                val_dataset.x0,
+                val_dataset.U,
+                val_dataset.sigma,
+                val_dataset.s,
+            )
+            print(f"Epoch {epoch}, loss {loss:.4f}, val loss {val_loss:.4f}")
 
     # Save the trained model and parameters
     fname = "/tmp/reach_avoid_score_model.pkl"
