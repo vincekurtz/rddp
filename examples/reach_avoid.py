@@ -1,5 +1,6 @@
 import pickle
 import sys
+import time
 from typing import Tuple
 
 import jax
@@ -48,12 +49,14 @@ def solve_with_gradient_descent() -> None:
     U = jnp.zeros((prob.num_steps - 1, prob.sys.action_shape[0]))
     J, grad = cost_and_grad(U)
 
+    st = time.time()
     for i in range(5000):
         J, grad = cost_and_grad(U)
         U -= 1e-2 * grad
 
         if i % 1000 == 0:
             print(f"Step {i}, cost {J}, grad {jnp.linalg.norm(grad)}")
+    print(f"Gradient descent took {time.time() - st:.2f} seconds")
 
     X = prob.sys.rollout(U, x0)
 
@@ -83,8 +86,10 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate some data
+    st = time.time()
     rng, gen_rng = jax.random.split(rng)
     dataset = generator.generate(gen_rng)
+    print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Save the data if requested
     fname = "/tmp/reach_avoid_dataset.pkl"
@@ -159,7 +164,7 @@ def fit_score_model() -> None:
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
     # Initialize the score model
-    net = DiffusionPolicyMLP(layer_sizes=[64, 64])
+    net = DiffusionPolicyMLP(layer_sizes=(64,) * 3)
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
@@ -167,8 +172,8 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 500
-    batch_size = 512
+    epochs = 1000
+    batch_size = 1024
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
 
@@ -214,6 +219,7 @@ def fit_score_model() -> None:
 
         return params, opt_state, loss
 
+    st = time.time()
     for epoch in range(epochs + 1):
         for _ in range(batches_per_epoch):
             rng, batch_rng = jax.random.split(rng)
@@ -228,6 +234,7 @@ def fit_score_model() -> None:
                 val_dataset.s,
             )
             print(f"Epoch {epoch}, loss {loss:.4f}, val loss {val_loss:.4f}")
+    print(f"Score model training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters
     fname = "/tmp/reach_avoid_score_model.pkl"
@@ -284,7 +291,9 @@ def deploy_trained_model() -> None:
 
     rng, gen_rng = jax.random.split(rng)
     gen_rng = jax.random.split(gen_rng, num_samples)
+    st = time.time()
     Us = jax.vmap(generate_control_tape)(gen_rng)
+    print(f"Annealed Langevin sampling took {time.time() - st:.2f} seconds")
 
     # Compute cost and state trajectories
     costs = jax.jit(jax.vmap(prob.total_cost, in_axes=(0, None)))(Us, x0)
