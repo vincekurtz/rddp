@@ -59,25 +59,27 @@ class DiffusionDataset:
     Attributes:
         x0: The initial state x₀.
         U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
-        s: The noised score estimate ŝ = σₖ² ∇ log pₖ(U | x₀).
+        s: The noised score estimate ŝ = ∇ log pₖ(U | x₀).
         k: The noise level index k.
+        sigma: The noise level σₖ.
     """
 
     x0: jnp.ndarray
     U: jnp.ndarray
     s: jnp.ndarray
     k: jnp.ndarray
+    sigma: jnp.ndarray
 
 
 class DatasetGenerator:
     """Generate a diffusion policy dataset for score function learning.
 
     The dataset consists of tuples
-        (x₀, U, ŝ, k),
+        (x₀, U, ŝ, k, σₖ),
     where
         x₀ is the initial state,
         U is the control sequence U = [u₀, u₁, ..., u_T₋₁],
-        ŝ is the noised score estimate ŝ = σₖ² ∇ log pₖ(U | x₀),
+        ŝ is the noised score estimate ŝ = ∇ log pₖ(U | x₀),
         and k is noise level index.
     """
 
@@ -105,7 +107,7 @@ class DatasetGenerator:
         sigma: float,
         rng: jax.random.PRNGKey,
     ) -> jnp.ndarray:
-        """Estimate the noised score s = σ² ∇ log pₖ(U | x₀) with M rollouts.
+        """Estimate the noised score s = ∇ log pₖ(U | x₀) with M rollouts.
 
         The score of the noised target distribution
 
@@ -148,6 +150,7 @@ class DatasetGenerator:
         # Compute the noised score estimate
         deltaU = U_noised - controls
         score_estimate = jnp.einsum("i,i...->...", weights, deltaU)
+        score_estimate /= sigma**2
 
         return score_estimate
 
@@ -192,7 +195,7 @@ class DatasetGenerator:
             rng, ctrl_rng = jax.random.split(rng)
             U = mu + sigma * jax.random.normal(ctrl_rng, (N, *mu.shape))
 
-            # Estimate noised scores ŝ = σₖ² ∇ log pₖ(U | x₀)
+            # Estimate noised scores ŝ = ∇ log pₖ(U | x₀)
             rng, score_rng = jax.random.split(rng)
             score_rng = jax.random.split(score_rng, N)
             s = jax.vmap(
@@ -201,22 +204,28 @@ class DatasetGenerator:
 
             # Update μₖ₋₁ by descending the score gradient
             # TODO: figure out a better/more principled update
-            mu = mu + jnp.mean(s, axis=0)
+            mu = mu + sigma**2 * jnp.mean(s, axis=0)
+
+            # Put together the dataset (x₀, Uₖⁱ, ŝₖⁱ, k, σₖ)
+            dataset = (
+                jnp.tile(x0, (N, 1)),
+                U,
+                s,
+                jnp.tile(k, (N, 1)),
+                jnp.tile(sigma, (N, 1)),
+            )
 
             # Update σₖ₋₁ = γ σₖ
             sigma *= gamma
 
-            # Put together the dataset (x₀, Uₖⁱ, ŝₖⁱ, k)
-            dataset = (jnp.tile(x0, (N, 1)), U, s, jnp.full((N,), k))
-
             return (mu, sigma, rng), dataset
 
         rng, rollouts_rng = jax.random.split(rng)
-        _, (x0, U, s, k) = jax.lax.scan(
+        _, (x0, U, s, k, sigma) = jax.lax.scan(
             scan_fn, (muL, sigmaL, rollouts_rng), jnp.arange(L - 1, -1, -1)
         )
 
-        return DiffusionDataset(x0, U, s, k)
+        return DiffusionDataset(x0, U, s, k, sigma)
 
     def generate(self, rng: jax.random.PRNGKey) -> DiffusionDataset:
         """Generate a dataset of noised score estimates, (x₀, U, ŝ, k).

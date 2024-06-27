@@ -48,7 +48,7 @@ def test_score_estimate() -> None:
     assert s.shape == U.shape
 
     # Gradient descent should improve the cost
-    assert prob.total_cost(U, x0) > prob.total_cost(U + s, x0)
+    assert prob.total_cost(U, x0) > prob.total_cost(U + sigma**2 * s, x0)
 
 
 def test_gen_from_state() -> None:
@@ -83,7 +83,8 @@ def test_gen_from_state() -> None:
     assert dataset.x0.shape == (L, N, 2)
     assert dataset.U.shape == (L, N, prob.num_steps - 1, 2)
     assert dataset.s.shape == (L, N, prob.num_steps - 1, 2)
-    assert dataset.k.shape == (L, N)
+    assert dataset.k.shape == (L, N, 1)
+    assert dataset.sigma.shape == (L, N, 1)
 
     # Check that the costs decreased
     costs = jax.vmap(jax.vmap(prob.total_cost))(dataset.U, dataset.x0)
@@ -122,7 +123,8 @@ def test_generate() -> None:
     assert dataset.x0.shape == (Nx * L * N, 2)
     assert dataset.U.shape == (Nx * L * N, prob.num_steps - 1, 2)
     assert dataset.s.shape == (Nx * L * N, prob.num_steps - 1, 2)
-    assert dataset.k.shape == (Nx * L * N,)
+    assert dataset.k.shape == (Nx * L * N, 1)
+    assert dataset.sigma.shape == (Nx * L * N, 1)
 
 
 def test_save_and_load() -> None:
@@ -143,12 +145,13 @@ def test_save_and_load() -> None:
 
     # Create a dummy dataset
     rng = jax.random.PRNGKey(0)
-    rng, x0_rng, U_rng, s_rng, k_rng = jax.random.split(rng, 5)
+    rng, x0_rng, U_rng, s_rng, k_rng, sigma_rng = jax.random.split(rng, 6)
     x0 = jax.random.normal(x0_rng, (8, 2))
     U = jax.random.normal(U_rng, (8, 19, 2))
     s = jax.random.normal(s_rng, (8, 19, 2))
-    k = jax.random.randint(k_rng, (8,), 0, 250)
-    dataset = DiffusionDataset(x0, U, s, k)
+    k = jax.random.randint(k_rng, (8, 1), 0, 250)
+    sigma = jax.random.normal(sigma_rng, (8, 1))
+    dataset = DiffusionDataset(x0, U, s, k, sigma)
 
     # Create a temporary directory
     local_dir = Path("_test_save_dataset")

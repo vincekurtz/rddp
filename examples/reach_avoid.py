@@ -73,7 +73,7 @@ def generate_dataset(save: bool = False) -> None:
         noise_decay_rate=0.99,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=1024,
+        num_initial_states=32,
         num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=64,
     )
@@ -102,7 +102,8 @@ def generate_dataset(save: bool = False) -> None:
         prob.plot_scenario()
         sigma = sigma_L * gamma ** (L - k - 1)
         ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-        idxs = jnp.where(dataset.k == k)
+        idxs = jnp.where(dataset.k == k)[0]
+        assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
         Us = dataset.U[idxs]
         x0s = dataset.x0[idxs]
         Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
@@ -158,7 +159,7 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_k)
 
     # Learning parameters
-    iterations = 10_000
+    iterations = 50_000
     batch_size = 256
     learning_rate = 1e-3
 
@@ -232,7 +233,6 @@ def deploy_trained_model() -> None:
     # Do annealed langevin sampling
     L = options.num_noise_levels
     sigma = options.starting_noise_level
-    eps = 0.001
 
     rng, init_rng = jax.random.split(rng)
     U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
@@ -245,7 +245,8 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, k)
-        U = U + eps * score + jnp.sqrt(2 * eps * sigma**2) * z
+        eps = 0.001 * sigma**2
+        U = U + eps * sigma**2 * score + jnp.sqrt(2 * eps) * z
         return (U, k, sigma, rng), None
 
     for k in range(L - 1, -1, -1):
