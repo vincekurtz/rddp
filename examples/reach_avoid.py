@@ -70,7 +70,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.001,
+        temperature=0.01,
         num_noise_levels=150,
         starting_noise_level=1.0,
         noise_decay_rate=0.97,
@@ -167,10 +167,10 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 500
-    batch_size = 128
+    epochs = 5000
+    batch_size = 256
     batches_per_epoch = len(train_dataset.x0) // batch_size
-    learning_rate = 1e-2
+    learning_rate = 1e-3
 
     print("  Training dataset size:", train_dataset.x0.shape)
     print("  Validation dataset size:", val_dataset.x0.shape)
@@ -184,8 +184,7 @@ def fit_score_model() -> None:
         """Loss function for score model training."""
         s_pred = net.apply(params, x0, U, sigma)
         err = jnp.square(s_pred - s)
-        multiplier = (sigma**2).flatten()
-        err = jnp.einsum("i,i...->i...", multiplier, err)
+        err = jnp.einsum("ij,i...->i...", sigma**2, err)
         return jnp.mean(err)
 
     loss_and_grad = jax.value_and_grad(loss_fn)
@@ -266,7 +265,7 @@ def deploy_trained_model() -> None:
         for _ in range(options.num_noise_levels - 1, -1, -1):
             # Do langevin sampling
             (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(50)
+                update_sample, (U, sigma, rng), jnp.arange(200)
             )
 
             # Anneal the noise
