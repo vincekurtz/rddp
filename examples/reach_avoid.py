@@ -138,7 +138,6 @@ def fit_score_model() -> None:
     with open(fname, "rb") as f:
         data = pickle.load(f)
     dataset = data["dataset"]
-    dataset = dataset.replace(k=dataset.k.reshape(-1, 1))  # TODO: fix earlier
     options = data["langevin_options"]
 
     # Split the data into training and validation sets
@@ -154,11 +153,11 @@ def fit_score_model() -> None:
     net = DiffusionPolicyMLP(layer_sizes=[128, 128])
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((19, 2))
-    dummy_k = jnp.array([10])
+    dummy_sigma = jnp.zeros((1,))
     rng, params_rng = jax.random.split(rng)
-    params = net.init(params_rng, dummy_x0, dummy_U, dummy_k)
+    params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
-    # Learning parameters
+    # Learning hyper-parameters
     iterations = 50_000
     batch_size = 256
     learning_rate = 1e-3
@@ -167,9 +166,9 @@ def fit_score_model() -> None:
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(params)
 
-    def loss_fn(params, x0, U, k, s):  # noqa: ANN001, N803 (ingore annotations)
+    def loss_fn(params, x0, U, sigma, s):  # noqa: ANN001, N803 (ingore annotations)
         """Loss function for score model training."""
-        s_pred = net.apply(params, x0, U, k)
+        s_pred = net.apply(params, x0, U, sigma)
         return jnp.mean(jnp.square(s_pred - s))
 
     loss_and_grad = jax.value_and_grad(loss_fn)
@@ -182,11 +181,11 @@ def fit_score_model() -> None:
         idxs = jax.random.randint(rng, (batch_size,), 0, len(train_dataset.x0))
         x0 = train_dataset.x0[idxs]
         U = train_dataset.U[idxs]
-        k = train_dataset.k[idxs]
+        sigma = train_dataset.sigma[idxs]
         s = train_dataset.s[idxs]
 
         # Compute the loss and gradients
-        loss, grad = loss_and_grad(params, x0, U, k, s)
+        loss, grad = loss_and_grad(params, x0, U, sigma, s)
 
         # Update the parameters
         updates, opt_state = optimizer.update(grad, opt_state)
@@ -203,7 +202,7 @@ def fit_score_model() -> None:
                 params,
                 val_dataset.x0,
                 val_dataset.U,
-                val_dataset.k,
+                val_dataset.sigma,
                 val_dataset.s,
             )
             print(f"Step {iter}, loss {loss:.4f}, val loss {val_loss:.4f}")
@@ -241,18 +240,18 @@ def deploy_trained_model() -> None:
 
     def update_sample(carry: Tuple, i: int):
         """Scannable function for Langevin sampling."""
-        U, k, sigma, rng = carry
+        U, sigma, rng = carry
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
-        score = net.apply(params, x0, U, k)
+        score = net.apply(params, x0, U, jnp.array([sigma]))
         eps = 0.001 * sigma**2
-        U = U + eps * sigma**2 * score + jnp.sqrt(2 * eps) * z
-        return (U, k, sigma, rng), None
+        U = U + eps * score + 0.0 * jnp.sqrt(2 * eps) * z
+        return (U, sigma, rng), None
 
     for k in range(L - 1, -1, -1):
         # Langevin sampling at the current noise level
-        (U, _, _, rng), _ = jax.lax.scan(
-            update_sample, (U, jnp.array([k]), sigma, rng), jnp.arange(5)
+        (U, _, rng), _ = jax.lax.scan(
+            update_sample, (U, sigma, rng), jnp.arange(50)
         )
 
         # Reduce the noise level
