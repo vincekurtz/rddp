@@ -69,8 +69,8 @@ if __name__ == "__main__":
     )
     rng, sample_rng = jax.random.split(rng)
     sample_rng = jax.random.split(rng, x.shape[0])
-    s_hat = vmap_noised_score(x, 1024, 0.001, sample_rng)
-    plt.scatter(x, s_hat, alpha=0.5, label="Estimated, sigma=0.001")
+    s_hat = vmap_noised_score(x, 50, 0.01, sample_rng)
+    plt.scatter(x, s_hat, alpha=0.5, label="Estimated, sigma=0.01")
 
     rng, sample_rng = jax.random.split(rng)
     sample_rng = jax.random.split(rng, x.shape[0])
