@@ -17,7 +17,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 10
+HORIZON = 20
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -81,7 +81,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     gen_options = DatasetGenerationOptions(
         num_initial_states=256,
         num_data_points_per_initial_state=2,
-        num_rollouts_per_data_point=64,
+        num_rollouts_per_data_point=512,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
