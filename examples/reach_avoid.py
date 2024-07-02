@@ -18,7 +18,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 5
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -117,7 +117,7 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
         U_tilde = U + sigma * jax.random.normal(noise_rng, U.shape)
 
         # Estimate the score
-        s = (U_tilde - U) / sigma**2
+        s = (U - U_tilde) / sigma**2
         return rng, (x0, U_tilde, s, jnp.array([k]), jnp.array([sigma]))
 
     def generate_noised_data(rng: jax.random.PRNGKey):
