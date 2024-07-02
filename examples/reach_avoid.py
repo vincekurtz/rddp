@@ -396,8 +396,8 @@ def deploy_trained_model() -> None:
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        alpha = 0.1 * sigma**2
-        U = U + alpha * score + 0.0 * jnp.sqrt(2 * alpha) * z
+        alpha = 0.001 * sigma**2
+        U = U + alpha * score + 1.0 * jnp.sqrt(2 * alpha) * z
         return (U, sigma, rng), None
 
     def generate_control_tape(rng: jax.random.PRNGKey):
@@ -411,7 +411,7 @@ def deploy_trained_model() -> None:
         for _ in range(L - 1, -1, -1):
             # Do langevin sampling
             (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(10)
+                update_sample, (U, sigma, rng), jnp.arange(100)
             )
 
             # Anneal the noise
