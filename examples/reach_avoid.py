@@ -13,6 +13,7 @@ from rddp.data_generation import (
     AnnealedLangevinOptions,
     DatasetGenerationOptions,
     DatasetGenerator,
+    DiffusionDataset,
 )
 from rddp.tasks.reach_avoid import ReachAvoid
 
@@ -38,7 +39,9 @@ class ReachAvoidFixedX0(ReachAvoid):
         return self.x0
 
 
-def solve_with_gradient_descent() -> None:
+def solve_with_gradient_descent(
+    plot: bool = True, u_guess: float = 0.0
+) -> None:
     """Solve the optimal control problem using simple gradient descent."""
     prob = ReachAvoid(num_steps=HORIZON)
     x0 = jnp.array([0.1, -1.5])
@@ -46,7 +49,7 @@ def solve_with_gradient_descent() -> None:
     cost_and_grad = jax.jit(
         jax.value_and_grad(lambda us: prob.total_cost(us, x0))
     )
-    U = jnp.zeros((prob.num_steps - 1, prob.sys.action_shape[0]))
+    U = u_guess * jnp.ones((prob.num_steps - 1, prob.sys.action_shape[0]))
     J, grad = cost_and_grad(U)
 
     st = time.time()
@@ -58,11 +61,140 @@ def solve_with_gradient_descent() -> None:
             print(f"Step {i}, cost {J}, grad {jnp.linalg.norm(grad)}")
     print(f"Gradient descent took {time.time() - st:.2f} seconds")
 
-    X = prob.sys.rollout(U, x0)
+    if plot:
+        X = prob.sys.rollout(U, x0)
+        prob.plot_scenario()
+        plt.plot(X[:, 0], X[:, 1], "o-")
+        plt.show()
+    return U
 
-    prob.plot_scenario()
-    plt.plot(X[:, 0], X[:, 1], "o-")
-    plt.show()
+
+def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
+    """Generate data from "demonstrations" (a.k.a. gradient descent solutions).
+
+    Saves data to a file just like generate_dataset, but this data is based on
+    a more standard score matching framework.
+    """
+    rng = jax.random.PRNGKey(0)
+
+    # Problem setup
+    x0 = jnp.array([-0.1, -1.5])
+    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
+    langevin_options = AnnealedLangevinOptions(
+        temperature=0.01,
+        num_noise_levels=250,
+        starting_noise_level=1.0,
+        noise_decay_rate=0.98,
+    )
+    gen_options = DatasetGenerationOptions(
+        num_initial_states=256,
+        num_data_points_per_initial_state=8,
+        num_rollouts_per_data_point=None,  # Not relevant for demos
+    )
+
+    # Solve gradient descent with two different guesses
+    U1 = solve_with_gradient_descent(plot=False, u_guess=1.0)
+    U2 = solve_with_gradient_descent(plot=False, u_guess=-1.0)
+    U_demo = jnp.array([U1, U2])
+
+    # Generate the dataset
+    sigma_L = langevin_options.starting_noise_level
+    gamma = langevin_options.noise_decay_rate
+    L = langevin_options.num_noise_levels
+
+    def scan_fn(rng: jax.random.PRNGKey, k: int):
+        """Generate a data point by adding noise to a demonstration."""
+        rng, demo_rng = jax.random.split(rng)
+        demo_idx = jax.random.randint(demo_rng, (1,), 0, 2)[0]
+        U = U_demo[demo_idx]
+
+        rng, noise_rng = jax.random.split(rng)  # Make the demos slightly noisy
+        U += 0.01 * jax.random.normal(noise_rng, U.shape)
+
+        # Add noise to the demonstration
+        sigma = sigma_L * gamma ** (L - k - 1)
+        rng, noise_rng = jax.random.split(rng)
+        U_tilde = U + sigma * jax.random.normal(noise_rng, U.shape)
+
+        # Estimate the score
+        s = (U_tilde - U) / sigma**2
+        return rng, (x0, U_tilde, s, jnp.array([k]), jnp.array([sigma]))
+
+    def generate_noised_data(rng: jax.random.PRNGKey):
+        """Generate some training data across all noise levels."""
+        rng, gen_rng = jax.random.split(rng)
+        rng, (x0, U, s, k, sigma) = jax.lax.scan(
+            scan_fn, gen_rng, jnp.arange(L)
+        )
+        return DiffusionDataset(x0, U, s, k, sigma)
+
+    num_data_points = (
+        gen_options.num_initial_states
+        * gen_options.num_data_points_per_initial_state
+    )
+    rng, gen_rng = jax.random.split(rng)
+    gen_rng = jax.random.split(gen_rng, num_data_points)
+    dataset = jax.vmap(generate_noised_data)(gen_rng)
+
+    # Flatten the dataset
+    dataset = jax.tree.map(
+        lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
+    )
+
+    # Save the data if requested
+    fname = "/tmp/reach_avoid_dataset.pkl"
+    if save:
+        with open(fname, "wb") as f:
+            pickle.dump(
+                {"dataset": dataset, "langevin_options": langevin_options}, f
+            )
+        print(f"Saved dataset to {fname}")
+
+    # Make some plots if requested
+    if plot:
+        gamma = langevin_options.noise_decay_rate
+        sigma_L = langevin_options.starting_noise_level
+        L = langevin_options.num_noise_levels
+
+        # Plot samples at certain noise levels
+        fig, ax = plt.subplots(1, 5)
+
+        for i, k in enumerate(
+            [0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]
+        ):
+            plt.sca(ax[i])
+            prob.plot_scenario()
+            sigma = sigma_L * gamma ** (L - k - 1)
+            ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
+            idxs = jnp.where(dataset.k == k)[0]
+            idxs = idxs[0 : min(32, len(idxs))]
+            assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
+            Us = dataset.U[idxs]
+            x0s = dataset.x0[idxs]
+            Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
+            px = Xs[:, :, 0].T
+            py = Xs[:, :, 1].T
+            ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
+
+        # Plot cost at each iteration
+        plt.figure()
+
+        jit_cost = jax.jit(jax.vmap(prob.total_cost))
+        for k in range(L):
+            iter = L - k
+            idxs = jnp.where(dataset.k == k)[0]
+            idxs = idxs[0 : min(32, len(idxs))]
+            Us = dataset.U[idxs]
+            x0s = dataset.x0[idxs]
+            costs = jit_cost(Us, x0s)
+            plt.scatter(
+                jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5
+            )
+        plt.xlabel("Iteration (L - k)")
+        plt.ylabel("Cost J(U, x₀)")
+        plt.yscale("log")
+
+        plt.show()
 
 
 def generate_dataset(save: bool = False, plot: bool = False) -> None:
@@ -173,7 +305,7 @@ def fit_score_model() -> None:
 
     # Learning hyper-parameters
     epochs = 1000
-    batch_size = 1024
+    batch_size = 4096
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
 
@@ -309,7 +441,8 @@ def deploy_trained_model() -> None:
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd]"
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|generate_from_demos]"
+
     num_args = 1
     if len(sys.argv) != num_args + 1:
         print(usage)
@@ -317,6 +450,8 @@ if __name__ == "__main__":
 
     if sys.argv[1] == "generate":
         generate_dataset(save=True, plot=True)
+    elif sys.argv[1] == "generate_from_demos":
+        generate_dataset_from_demos(save=True, plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
