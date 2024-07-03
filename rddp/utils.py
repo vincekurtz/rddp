@@ -143,3 +143,38 @@ def annealed_langevin_sample(
     )
 
     return U, dataset
+
+
+def sample_dataset(
+    dataset: DiffusionDataset, k: int, num_samples: int, rng: jax.random.PRNGKey
+) -> DiffusionDataset:
+    """Extract some random samples from the dataset at a specific noise level.
+
+    This is particuarly useful for visualizing the training dataset.
+
+    Args:
+        dataset: The full dataset.
+        k: The noise level index.
+        num_samples: The number of samples to extract.
+        rng: The random number generator key to use for sampling.
+
+    Returns:
+        A subset of the dataset at the given noise level.
+    """
+    assert dataset.k.shape == (
+        dataset.x0.shape[0],
+        1,
+    ), "dataset should be flattened"
+
+    idxs = jnp.where(dataset.k == k)[0]
+    rng, sample_rng = jax.random.split(rng)
+    idxs = jax.random.permutation(sample_rng, idxs)
+    idxs = idxs[:num_samples]
+
+    return DiffusionDataset(
+        x0=dataset.x0[idxs],
+        U=dataset.U[idxs],
+        s=dataset.s[idxs],
+        k=dataset.k[idxs],
+        sigma=dataset.sigma[idxs],
+    )

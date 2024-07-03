@@ -14,10 +14,11 @@ from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
     annealed_langevin_sample,
+    sample_dataset,
 )
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 5
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -148,49 +149,65 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
 
     # Make some plots if requested
     if plot:
-        gamma = langevin_options.noise_decay_rate
-        sigma_L = langevin_options.starting_noise_level
-        L = langevin_options.num_noise_levels
+        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
-        # Plot samples at certain noise levels
-        fig, ax = plt.subplots(1, 5)
 
-        for i, k in enumerate(
-            [0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]
-        ):
-            plt.sca(ax[i])
-            prob.plot_scenario()
-            sigma = sigma_L * gamma ** (L - k - 1)
-            ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-            idxs = jnp.where(dataset.k == k)[0]
-            idxs = idxs[0 : min(64, len(idxs))]
-            assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
-            Us = dataset.U[idxs]
-            x0s = dataset.x0[idxs]
-            Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
-            px = Xs[:, :, 0].T
-            py = Xs[:, :, 1].T
-            ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
+def visualize_dataset(
+    dataset: DiffusionDataset, prob: ReachAvoid, num_noise_levels: int
+) -> None:
+    """Make some plots of the generated dataset.
 
-        # Plot cost at each iteration
-        plt.figure()
+    Args:
+        dataset: The generated dataset.
+        prob: The reach-avoid problem instance to use for plotting.
+        num_noise_levels: The number of noise levels in the dataset.
+    """
+    rng = jax.random.PRNGKey(0)
 
-        jit_cost = jax.jit(jax.vmap(prob.total_cost))
-        for k in range(L):
-            iter = L - k
-            idxs = jnp.where(dataset.k == k)[0]
-            idxs = idxs[0 : min(64, len(idxs))]
-            Us = dataset.U[idxs]
-            x0s = dataset.x0[idxs]
-            costs = jit_cost(Us, x0s)
-            plt.scatter(
-                jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5
-            )
-        plt.xlabel("Iteration (L - k)")
-        plt.ylabel("Cost J(U, x₀)")
-        plt.yscale("log")
+    noise_levels = [
+        0,
+        int(num_noise_levels / 4),
+        int(num_noise_levels / 2),
+        int(3 * num_noise_levels / 4),
+        num_noise_levels - 1,
+    ]
 
-        plt.show()
+    # Plot samples at certain iterations
+    fig, ax = plt.subplots(1, len(noise_levels))
+    for i, k in enumerate(noise_levels):
+        plt.sca(ax[i])
+
+        # Get a random subset of the data at this noise level
+        rng, sample_rng = jax.random.split(rng)
+        subset = sample_dataset(dataset, k, 32, sample_rng)
+
+        # Plot the scenario and the sampled trajectories
+        prob.plot_scenario()
+        Xs = jax.vmap(prob.sys.rollout)(subset.U, subset.x0)
+        px, py = Xs[:, :, 0].T, Xs[:, :, 1].T
+        ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
+
+        sigma = subset.sigma[0, 0]
+        ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
+
+    # Plot costs at each iteration
+    plt.figure()
+    jit_cost = jax.jit(jax.vmap(prob.total_cost))
+    for k in range(num_noise_levels):
+        iter = num_noise_levels - k
+
+        # Get a random subset of the data at this noise level
+        rng, sample_rng = jax.random.split(rng)
+        subset = sample_dataset(dataset, k, 32, sample_rng)
+
+        # Compute the cost of each trajectory and add it to the plot
+        costs = jit_cost(subset.U, subset.x0)
+        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
+    plt.xlabel("Iteration (L - k)")
+    plt.ylabel("Cost J(U, x₀)")
+    plt.yscale("log")
+
+    plt.show()
 
 
 def generate_dataset(save: bool = False, plot: bool = False) -> None:
@@ -228,53 +245,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
 
     # Make some plots if requested
     if plot:
-        gamma = langevin_options.noise_decay_rate
-        sigma_L = langevin_options.starting_noise_level
-        L = langevin_options.num_noise_levels
-
-        # Plot samples at certain noise levels
-        fig, ax = plt.subplots(1, 5)
-
-        for i, k in enumerate(
-            [0, int(L / 4), int(L / 2), int(3 * L / 4), L - 1]
-        ):
-            plt.sca(ax[i])
-            prob.plot_scenario()
-            sigma = sigma_L * gamma ** (L - k - 1)
-            ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-            idxs = jnp.where(jnp.isclose(dataset.sigma, sigma))[0]
-            rng, idxs_rng = jax.random.split(rng)
-            idxs = jax.random.permutation(idxs_rng, idxs)
-            idxs = idxs[0 : min(32, len(idxs))]
-            Us = dataset.U[idxs]
-            x0s = dataset.x0[idxs]
-            Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
-            px = Xs[:, :, 0].T
-            py = Xs[:, :, 1].T
-            ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
-
-        # Plot cost at each iteration
-        plt.figure()
-
-        jit_cost = jax.jit(jax.vmap(prob.total_cost))
-        for k in range(L):
-            iter = L - k
-            sigma = sigma_L * gamma ** (iter - 1)
-            idxs = jnp.where(jnp.isclose(dataset.sigma, sigma))[0]
-            rng, idxs_rng = jax.random.split(rng)
-            idxs = jax.random.permutation(idxs_rng, idxs)
-            idxs = idxs[0 : min(32, len(idxs))]
-            Us = dataset.U[idxs]
-            x0s = dataset.x0[idxs]
-            costs = jit_cost(Us, x0s)
-            plt.scatter(
-                jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5
-            )
-        plt.xlabel("Iteration (L - k)")
-        plt.ylabel("Cost J(U, x₀)")
-        plt.yscale("log")
-
-        plt.show()
+        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
 
 def fit_score_model() -> None:
