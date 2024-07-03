@@ -1,7 +1,6 @@
 import pickle
 import sys
 import time
-from typing import Tuple
 
 import jax
 import jax.numpy as jnp
@@ -9,13 +8,13 @@ import matplotlib.pyplot as plt
 import optax
 
 from rddp.architectures import DiffusionPolicyMLP
-from rddp.data_generation import (
-    AnnealedLangevinOptions,
-    DatasetGenerationOptions,
-    DatasetGenerator,
-    DiffusionDataset,
-)
+from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.utils import (
+    AnnealedLangevinOptions,
+    DiffusionDataset,
+    annealed_langevin_sample,
+)
 
 # Global planning horizon definition
 HORIZON = 20
@@ -81,15 +80,16 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
     x0 = jnp.array([-0.1, -1.5])
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
-        num_noise_levels=250,
-        starting_noise_level=1.0,
+        num_noise_levels=300,
+        starting_noise_level=0.5,
         noise_decay_rate=0.98,
+        num_steps=100,
+        step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
+        temperature=0.001,
         num_initial_states=256,
-        num_data_points_per_initial_state=8,
-        num_rollouts_per_data_point=None,  # Not relevant for demos
+        num_rollouts_per_data_point=128,
     )
 
     # Solve gradient descent with two different guesses
@@ -126,8 +126,7 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
         return DiffusionDataset(x0, U, s, k, sigma)
 
     num_data_points = (
-        gen_options.num_initial_states
-        * gen_options.num_data_points_per_initial_state
+        gen_options.num_initial_states * langevin_options.num_steps
     )
     rng, gen_rng = jax.random.split(rng)
     gen_rng = jax.random.split(gen_rng, num_data_points)
@@ -202,7 +201,6 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.001,
         num_noise_levels=300,
         starting_noise_level=0.5,
         noise_decay_rate=0.98,
@@ -210,8 +208,9 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
+        temperature=0.001,
         num_initial_states=256,
-        num_rollouts_per_data_point=256,
+        num_rollouts_per_data_point=128,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
@@ -260,7 +259,7 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         jit_cost = jax.jit(jax.vmap(prob.total_cost))
         for k in range(L):
             iter = L - k
-            sigma = sigma_L * gamma** (iter - 1)
+            sigma = sigma_L * gamma ** (iter - 1)
             idxs = jnp.where(jnp.isclose(dataset.sigma, sigma))[0]
             rng, idxs_rng = jax.random.split(rng)
             idxs = jax.random.permutation(idxs_rng, idxs)
@@ -392,50 +391,41 @@ def deploy_trained_model() -> None:
     net = data["net"]
     options = data["options"]
 
-    alpha = options.step_size
-    N = options.num_steps
+    # Decide how much noise to add in the Langevin sampling
+    options = options.replace(noise_injection_level=0.0)
 
-    def update_sample(carry: Tuple, i: int):
-        """Scannable function for Langevin sampling."""
-        U, sigma, rng = carry
-        rng, noise_rng = jax.random.split(rng)
-        z = jax.random.normal(noise_rng, U.shape)
-        score = net.apply(params, x0, U, jnp.array([sigma]))
-        eps = alpha * sigma**2
-        U = U + eps * score + 0.0 * jnp.sqrt(2 * eps) * z
-        return (U, sigma, rng), None
+    def optimize_control_tape(rng: jax.random.PRNGKey):
+        """Optimize the control sequence using Langevin dynamics."""
+        # Guess an initial control sequence
+        rng, guess_rng = jax.random.split(rng, 2)
+        U_guess = options.starting_noise_level * jax.random.normal(
+            guess_rng, (prob.num_steps - 1, 2)
+        )
 
-    def generate_control_tape(rng: jax.random.PRNGKey):
-        """Generate an optimal control sequence from scratch."""
-        sigma = options.starting_noise_level
+        # Do annealed langevin sampling
+        rng, langevin_rng = jax.random.split(rng)
+        U, _ = annealed_langevin_sample(
+            options=options,
+            x0=x0,
+            u_init=U_guess,
+            score_fn=lambda x, u, sigma, rng: net.apply(
+                params, x, u, jnp.array([sigma])
+            ),
+            rng=langevin_rng,
+        )
 
-        rng, init_rng, sample_rng = jax.random.split(rng, 3)
-        U = sigma * jax.random.normal(init_rng, (prob.num_steps - 1, 2))
-
-        L = options.num_noise_levels
-        for _ in range(L - 1, -1, -1):
-            # Do langevin sampling
-            (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(N)
-            )
-
-            # Anneal the noise
-            sigma *= options.noise_decay_rate
         return U
 
-    # Do annealed langevin sampling
+    # Optimize from a bunch of initial guesses
     num_samples = 32
-
-    rng, gen_rng = jax.random.split(rng)
-    gen_rng = jax.random.split(gen_rng, num_samples)
+    rng, opt_rng = jax.random.split(rng)
+    opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
-    Us = jax.vmap(generate_control_tape)(gen_rng)
-    print(f"Annealed Langevin sampling took {time.time() - st:.2f} seconds")
-
-    # Compute cost and state trajectories
-    costs = jax.jit(jax.vmap(prob.total_cost, in_axes=(0, None)))(Us, x0)
-    Xs = jax.jit(jax.vmap(prob.sys.rollout, in_axes=(0, None)))(Us, x0)
-    print(f"Costs: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
+    Us = jax.vmap(optimize_control_tape)(opt_rng)
+    print(f"Sample generation took {time.time() - st:.2f} seconds")
+    Xs = jax.vmap(prob.sys.rollout, in_axes=(0, None))(Us, x0)
+    costs = jax.vmap(prob.total_cost, in_axes=(0, None))(Us, x0)
+    print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
 
     # Plot the sampled trajectories
     plt.figure()
@@ -446,7 +436,7 @@ def deploy_trained_model() -> None:
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|generate_from_demos]"
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|demos]"
 
     num_args = 1
     if len(sys.argv) != num_args + 1:
@@ -455,7 +445,7 @@ if __name__ == "__main__":
 
     if sys.argv[1] == "generate":
         generate_dataset(save=True, plot=True)
-    elif sys.argv[1] == "generate_from_demos":
+    elif sys.argv[1] == "demos":
         generate_dataset_from_demos(save=True, plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()

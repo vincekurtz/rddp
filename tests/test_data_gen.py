@@ -4,13 +4,9 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
-from rddp.data_generation import (
-    AnnealedLangevinOptions,
-    DatasetGenerationOptions,
-    DatasetGenerator,
-    DiffusionDataset,
-)
+from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.utils import AnnealedLangevinOptions, DiffusionDataset
 
 
 def test_score_estimate() -> None:
@@ -19,7 +15,6 @@ def test_score_estimate() -> None:
 
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.1,
         num_noise_levels=3,
         starting_noise_level=0.1,
         noise_decay_rate=0.9,
@@ -27,6 +22,7 @@ def test_score_estimate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
+        temperature=0.1,
         num_initial_states=1,
         num_rollouts_per_data_point=10,
     )
@@ -58,7 +54,6 @@ def test_gen_from_state() -> None:
 
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
@@ -66,6 +61,7 @@ def test_gen_from_state() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
+        temperature=0.01,
         num_initial_states=1,
         num_rollouts_per_data_point=16,
     )
@@ -100,7 +96,6 @@ def test_generate() -> None:
 
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
@@ -108,7 +103,8 @@ def test_generate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=1,
+        temperature=0.01,
+        num_initial_states=2,
         num_rollouts_per_data_point=16,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -120,7 +116,7 @@ def test_generate() -> None:
     # Check sizes
     Nx = gen_options.num_initial_states
     L = langevin_options.num_noise_levels
-    N = gen_options.num_data_points_per_initial_state
+    N = langevin_options.num_steps
 
     assert dataset.x0.shape == (Nx * L * N, 2)
     assert dataset.U.shape == (Nx * L * N, prob.num_steps - 1, 2)
@@ -133,7 +129,6 @@ def test_save_and_load() -> None:
     """Test saving and loading a dataset."""
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
@@ -141,6 +136,7 @@ def test_save_and_load() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
+        temperature=0.01,
         num_initial_states=1,
         num_rollouts_per_data_point=16,
     )
