@@ -81,7 +81,7 @@ if __name__ == "__main__":
     rng = jax.random.PRNGKey(0)
     x = jnp.linspace(-3, 3, 1000)
 
-    fig, ax = plt.subplots(4, 1, sharex=True, figsize=(10, 15))
+    fig, ax = plt.subplots(5, 1, sharex=True, figsize=(10, 15))
 
     ax[0].set_title("Energy")
     ax[0].plot(x, energy(x), label="Energy")
@@ -100,25 +100,48 @@ if __name__ == "__main__":
     ax[2].set_xlabel("x")
     ax[2].set_ylabel("occurances")
 
-    ax[3].set_title("Score")
+    ax[3].set_title("MPPI Score Estimate")
     ax[3].plot(x, true_score(x), label="True score")
 
     x = jnp.linspace(-3, 3, 100)
     vmap_noised_score = jax.vmap(
         estimate_noised_score, in_axes=(0, None, None, 0)
     )
-    rng, sample_rng = jax.random.split(rng)
-    sample_rng = jax.random.split(rng, x.shape[0])
-    s_hat = vmap_noised_score(x, 50, 0.01, sample_rng)
-    ax[3].scatter(x, s_hat, alpha=0.5, label="Estimated, sigma=0.01")
 
+    sigma = 0.01
     rng, sample_rng = jax.random.split(rng)
     sample_rng = jax.random.split(rng, x.shape[0])
-    s_hat = vmap_noised_score(x, 50, 0.1, sample_rng)
-    ax[3].scatter(x, s_hat, alpha=0.5, label="Estimated, sigma=0.1")
+    s_hat = vmap_noised_score(x, 50, sigma, sample_rng)
+    ax[3].scatter(x, s_hat, alpha=0.5, label=f"Estimated, sigma={sigma}")
+
+    sigma = 0.1
+    rng, sample_rng = jax.random.split(rng)
+    sample_rng = jax.random.split(rng, x.shape[0])
+    s_hat = vmap_noised_score(x, 50, sigma, sample_rng)
+    ax[3].scatter(x, s_hat, alpha=0.5, label=f"Estimated, sigma={sigma}")
 
     ax[3].set_xlabel("x")
     ax[3].set_ylabel("s(x)")
     ax[3].legend()
+
+    ax[4].set_title("Denoising Score Matching Estimate")
+    ax[4].plot(x, true_score(x), label="True score")
+
+    sigma = 0.5
+    x_data = samples  # samples from the target distribution
+    rng, sample_rng = jax.random.split(rng)
+    x_tilde = sigma * jax.random.normal(sample_rng, x_data.shape) - x_data
+    s_hat = (x_data - x_tilde) / sigma
+    ax[4].scatter(x_tilde, s_hat, alpha=0.5, label=f"Estimate, sigma={sigma}")
+
+    sigma = 0.1
+    rng, sample_rng = jax.random.split(rng)
+    x_tilde = sigma * jax.random.normal(sample_rng, x_data.shape) - x_data
+    s_hat = (x_data - x_tilde) / sigma
+    ax[4].scatter(x_tilde, s_hat, alpha=0.5, label=f"Estimate, sigma={sigma}")
+
+    ax[4].set_xlabel("x")
+    ax[4].set_ylabel("s(x)")
+    ax[4].legend()
 
     plt.show()
