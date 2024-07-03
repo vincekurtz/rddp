@@ -108,9 +108,6 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
         demo_idx = jax.random.randint(demo_rng, (1,), 0, 2)[0]
         U = U_demo[demo_idx]
 
-        rng, noise_rng = jax.random.split(rng)  # Make the demos slightly noisy
-        U += 0.01 * jax.random.normal(noise_rng, U.shape)
-
         # Add noise to the demonstration
         sigma = sigma_L * gamma ** (L - k - 1)
         rng, noise_rng = jax.random.split(rng)
@@ -167,7 +164,7 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
             sigma = sigma_L * gamma ** (L - k - 1)
             ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
             idxs = jnp.where(dataset.k == k)[0]
-            idxs = idxs[0 : min(32, len(idxs))]
+            idxs = idxs[0 : min(64, len(idxs))]
             assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
@@ -183,7 +180,7 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
         for k in range(L):
             iter = L - k
             idxs = jnp.where(dataset.k == k)[0]
-            idxs = idxs[0 : min(32, len(idxs))]
+            idxs = idxs[0 : min(64, len(idxs))]
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
             costs = jit_cost(Us, x0s)
@@ -209,10 +206,11 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         num_noise_levels=250,
         starting_noise_level=1.0,
         noise_decay_rate=0.98,
+        num_steps=100,
+        step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=256,
-        num_data_points_per_initial_state=8,
         num_rollouts_per_data_point=128,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -245,9 +243,10 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
             prob.plot_scenario()
             sigma = sigma_L * gamma ** (L - k - 1)
             ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-            idxs = jnp.where(dataset.k == k)[0]
+            idxs = jnp.where(jnp.isclose(dataset.sigma, sigma))[0]
+            rng, idxs_rng = jax.random.split(rng)
+            idxs = jax.random.permutation(idxs_rng, idxs)
             idxs = idxs[0 : min(32, len(idxs))]
-            assert jnp.allclose(sigma, dataset.sigma[idxs], atol=1e-4)
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
             Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
@@ -261,7 +260,10 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         jit_cost = jax.jit(jax.vmap(prob.total_cost))
         for k in range(L):
             iter = L - k
-            idxs = jnp.where(dataset.k == k)[0]
+            sigma = sigma_L * gamma** (iter - 1)
+            idxs = jnp.where(jnp.isclose(dataset.sigma, sigma))[0]
+            rng, idxs_rng = jax.random.split(rng)
+            idxs = jax.random.permutation(idxs_rng, idxs)
             idxs = idxs[0 : min(32, len(idxs))]
             Us = dataset.U[idxs]
             x0s = dataset.x0[idxs]
@@ -390,14 +392,17 @@ def deploy_trained_model() -> None:
     net = data["net"]
     options = data["options"]
 
+    alpha = options.step_size
+    N = options.num_steps
+
     def update_sample(carry: Tuple, i: int):
         """Scannable function for Langevin sampling."""
         U, sigma, rng = carry
         rng, noise_rng = jax.random.split(rng)
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
-        alpha = 0.001 * sigma**2
-        U = U + alpha * score + 1.0 * jnp.sqrt(2 * alpha) * z
+        eps = alpha * sigma**2
+        U = U + eps * score + 1.0 * jnp.sqrt(2 * eps) * z
         return (U, sigma, rng), None
 
     def generate_control_tape(rng: jax.random.PRNGKey):
@@ -411,7 +416,7 @@ def deploy_trained_model() -> None:
         for _ in range(L - 1, -1, -1):
             # Do langevin sampling
             (U, _, rng), _ = jax.lax.scan(
-                update_sample, (U, sigma, rng), jnp.arange(100)
+                update_sample, (U, sigma, rng), jnp.arange(N)
             )
 
             # Anneal the noise

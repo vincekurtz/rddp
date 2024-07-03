@@ -27,12 +27,16 @@ class AnnealedLangevinOptions:
         num_noise_levels: The number of noise levels L.
         starting_noise_level: The starting noise level σ_L.
         noise_decay_rate: The noise decay rate σₖ₋₁ = γ σₖ.
+        num_steps: The number of Langevin steps to take at each noise level, N.
+        step_size: The Langevin step size α.
     """
 
     temperature: float
     num_noise_levels: int
     starting_noise_level: int
     noise_decay_rate: float
+    num_steps: int
+    step_size: float
 
 
 @dataclass
@@ -41,14 +45,11 @@ class DatasetGenerationOptions:
 
     Attributes:
         num_initial_states: The number of initial states x₀ to sample.
-        num_data_points_per_initial_state: The number of data points per initial
-                                           state, N.
         num_rollouts_per_data_point: The number of rollouts used to estimate
                                      each score, M.
     """
 
     num_initial_states: int
-    num_data_points_per_initial_state: int
     num_rollouts_per_data_point: int
 
 
@@ -60,14 +61,12 @@ class DiffusionDataset:
         x0: The initial state x₀.
         U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
         s: The noised score estimate ŝ = ∇ log pₖ(U | x₀).
-        k: The noise level index k.
         sigma: The noise level σₖ.
     """
 
     x0: jnp.ndarray
     U: jnp.ndarray
     s: jnp.ndarray
-    k: jnp.ndarray
     sigma: jnp.ndarray
 
 
@@ -177,55 +176,62 @@ class DatasetGenerator:
             Dataset of states, controls, scores, and noise levels (x₀, U, ŝ, k).
         """
         L = self.langevin_options.num_noise_levels
-        N = self.datagen_options.num_data_points_per_initial_state
+        N = self.langevin_options.num_steps
         sigmaL = self.langevin_options.starting_noise_level
         gamma = self.langevin_options.noise_decay_rate
+        alpha = self.langevin_options.step_size
 
-        # Sample μ_L ~ 𝒩(0, σ_L²)
+        def langevin_step(carry: Tuple, i: int):
+            """Perform a single Langevin sampling step at noise level sigma.
+
+            Return the new control tape Uₖⁱ⁺¹ and the score estimate ŝₖⁱ.
+            """
+            U, sigma, rng = carry
+            rng, score_rng, z_rng = jax.random.split(rng, 3)
+            eps = alpha * sigma ** 2
+
+            # Langevin dynamics based on the estimated score
+            z = jax.random.normal(z_rng, U.shape)
+            s = self.estimate_noised_score(x0, U, sigma, score_rng)
+            U_new = U + eps * s + jnp.sqrt(2 * eps) * z
+
+            # Record training data
+            data = DiffusionDataset(
+                x0=x0,
+                U=U,
+                s=s,
+                sigma=jnp.array([sigma])
+            )
+
+            return (U_new, sigma, rng), data
+
+        def annealed_langevin_step(carry: Tuple, k: int):
+            """Generate samples at the k-th noise level."""
+            (U, sigma, rng) = carry
+
+            # Run Langevin dynamics for N steps, recording score estimates 
+            # along the way
+            rng, langevin_rng = jax.random.split(rng)
+            (U, _, _), data = jax.lax.scan(langevin_step,
+                                           (U, sigma, langevin_rng), jnp.arange(N))
+            
+            # Reduce the noise level σₖ₋₁ = γ σₖ
+            sigma *= gamma
+
+            return (U, sigma, rng), data
+        
+        # Sample U ~ 𝒩(0, σ_L²)
         rng, mu_rng = jax.random.split(rng)
-        muL = sigmaL * jax.random.normal(
+        U = sigmaL * jax.random.normal(
             mu_rng, (self.prob.num_steps - 1, *self.prob.sys.action_shape)
         )
 
-        def scan_fn(carry: Tuple, k: int):
-            """Estimate scores at the k-th noise level."""
-            (mu, sigma, rng) = carry
+        # Generate data for each noise level
+        rng, sampling_rng = jax.random.split(rng)
+        _, dataset = jax.lax.scan(annealed_langevin_step,
+                                  (U, sigmaL, sampling_rng),  jnp.arange(L - 1, -1, -1))
 
-            # Sample N control tapes Uₖⁱ ~ 𝒩(μₖ, σₖ²)
-            rng, ctrl_rng = jax.random.split(rng)
-            U = mu + sigma * jax.random.normal(ctrl_rng, (N, *mu.shape))
-
-            # Estimate noised scores ŝ = ∇ log pₖ(U | x₀)
-            rng, score_rng = jax.random.split(rng)
-            score_rng = jax.random.split(score_rng, N)
-            s = jax.vmap(
-                self.estimate_noised_score, in_axes=(None, 0, None, 0)
-            )(x0, U, sigma, score_rng)
-
-            # Update μₖ₋₁ by descending the score gradient
-            # TODO: figure out a better/more principled update
-            mu = mu + sigma**2 * jnp.mean(s, axis=0)
-
-            # Put together the dataset (x₀, Uₖⁱ, ŝₖⁱ, k, σₖ)
-            dataset = (
-                jnp.tile(x0, (N, 1)),
-                U,
-                s,
-                jnp.tile(k, (N, 1)),
-                jnp.tile(sigma, (N, 1)),
-            )
-
-            # Update σₖ₋₁ = γ σₖ
-            sigma *= gamma
-
-            return (mu, sigma, rng), dataset
-
-        rng, rollouts_rng = jax.random.split(rng)
-        _, (x0, U, s, k, sigma) = jax.lax.scan(
-            scan_fn, (muL, sigmaL, rollouts_rng), jnp.arange(L - 1, -1, -1)
-        )
-
-        return DiffusionDataset(x0, U, s, k, sigma)
+        return dataset
 
     def generate(self, rng: jax.random.PRNGKey) -> DiffusionDataset:
         """Generate a dataset of noised score estimates, (x₀, U, ŝ, k).

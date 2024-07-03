@@ -23,10 +23,11 @@ def test_score_estimate() -> None:
         num_noise_levels=3,
         starting_noise_level=0.1,
         noise_decay_rate=0.9,
+        num_steps=4,
+        step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=1,
-        num_data_points_per_initial_state=1,
         num_rollouts_per_data_point=10,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -61,10 +62,11 @@ def test_gen_from_state() -> None:
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
+        num_steps=8,
+        step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=1,
-        num_data_points_per_initial_state=64,
         num_rollouts_per_data_point=16,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -79,11 +81,10 @@ def test_gen_from_state() -> None:
 
     # Check sizes
     L = langevin_options.num_noise_levels
-    N = gen_options.num_data_points_per_initial_state
+    N = langevin_options.num_steps
     assert dataset.x0.shape == (L, N, 2)
     assert dataset.U.shape == (L, N, prob.num_steps - 1, 2)
     assert dataset.s.shape == (L, N, prob.num_steps - 1, 2)
-    assert dataset.k.shape == (L, N, 1)
     assert dataset.sigma.shape == (L, N, 1)
 
     # Check that the costs decreased
@@ -103,11 +104,12 @@ def test_generate() -> None:
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
+        num_steps=8,
+        step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=3,
-        num_data_points_per_initial_state=8,
-        num_rollouts_per_data_point=12,
+        num_initial_states=1,
+        num_rollouts_per_data_point=16,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
@@ -135,11 +137,12 @@ def test_save_and_load() -> None:
         num_noise_levels=250,
         starting_noise_level=0.1,
         noise_decay_rate=0.97,
+        num_steps=8,
+        step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        num_initial_states=3,
-        num_data_points_per_initial_state=8,
-        num_rollouts_per_data_point=12,
+        num_initial_states=1,
+        num_rollouts_per_data_point=16,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
