@@ -18,7 +18,7 @@ from rddp.data_generation import (
 from rddp.tasks.reach_avoid import ReachAvoid
 
 # Global planning horizon definition
-HORIZON = 5
+HORIZON = 20
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -202,16 +202,16 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        temperature=0.01,
-        num_noise_levels=250,
-        starting_noise_level=1.0,
+        temperature=0.001,
+        num_noise_levels=300,
+        starting_noise_level=0.5,
         noise_decay_rate=0.98,
         num_steps=100,
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
         num_initial_states=256,
-        num_rollouts_per_data_point=128,
+        num_rollouts_per_data_point=256,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
@@ -298,7 +298,7 @@ def fit_score_model() -> None:
     val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
 
     # Initialize the score model
-    net = DiffusionPolicyMLP(layer_sizes=(64,) * 3)
+    net = DiffusionPolicyMLP(layer_sizes=(128,) * 3)
     dummy_x0 = jnp.zeros((2,))
     dummy_U = jnp.zeros((HORIZON - 1, 2))
     dummy_sigma = jnp.zeros((1,))
@@ -306,7 +306,7 @@ def fit_score_model() -> None:
     params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
     # Learning hyper-parameters
-    epochs = 1000
+    epochs = 100
     batch_size = 4096
     batches_per_epoch = len(train_dataset.x0) // batch_size
     learning_rate = 1e-3
@@ -359,7 +359,7 @@ def fit_score_model() -> None:
             rng, batch_rng = jax.random.split(rng)
             params, opt_state, loss = train_step(params, opt_state, batch_rng)
 
-        if epoch % 100 == 0:
+        if epoch % 10 == 0:
             val_loss = jit_loss(
                 params,
                 val_dataset.x0,
@@ -402,7 +402,7 @@ def deploy_trained_model() -> None:
         z = jax.random.normal(noise_rng, U.shape)
         score = net.apply(params, x0, U, jnp.array([sigma]))
         eps = alpha * sigma**2
-        U = U + eps * score + 1.0 * jnp.sqrt(2 * eps) * z
+        U = U + eps * score + 0.0 * jnp.sqrt(2 * eps) * z
         return (U, sigma, rng), None
 
     def generate_control_tape(rng: jax.random.PRNGKey):
