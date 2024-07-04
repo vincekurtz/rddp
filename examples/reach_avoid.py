@@ -18,7 +18,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 25
 
 
 class ReachAvoidFixedX0(ReachAvoid):

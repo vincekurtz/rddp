@@ -168,17 +168,15 @@ def train(
     num_data_points = len(dataset.x0)
     rng, shuffle_rng = jax.random.split(rng)
     perm = jax.random.permutation(shuffle_rng, num_data_points)
-    dataset = jax.tree.map(lambda x: x[perm], dataset)
 
     # Split the dataset into training and validation sets
-    num_train = num_data_points * 9 // 10
-    train_data = jax.tree.map(lambda x: x[:num_train], dataset)
-    val_data = jax.tree.map(lambda x: x[num_train:], dataset)
-
-    # Put a cap on the validation set size to avoid OOM issues during training
-    num_validation_points = len(val_data.x0)
-    num_validation_points = min(num_validation_points, 10 * options.batch_size)
-    val_data = jax.tree.map(lambda x: x[:num_validation_points], val_data)
+    num_val = num_data_points // 10
+    num_val = min(num_val, 10 * options.batch_size)  # Cap to avoid OOM issues
+    num_train = num_data_points - num_val
+    train_idx = perm[:num_train]
+    val_idx = perm[num_train:]
+    train_data = jax.tree.map(lambda x: x[train_idx], dataset)
+    val_data = jax.tree.map(lambda x: x[val_idx], dataset)
 
     # Initialize the training state
     rng, init_rng = jax.random.split(rng)
