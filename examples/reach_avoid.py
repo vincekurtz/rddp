@@ -5,11 +5,11 @@ import time
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import optax
 
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
@@ -18,7 +18,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 5
+HORIZON = 20
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -250,100 +250,34 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
 
 def fit_score_model() -> None:
     """Fit a simple score model to the generated data."""
-    rng = jax.random.PRNGKey(0)
-
     # Load training data from a file (must run generate_dataset first)
     with open("/tmp/reach_avoid_dataset.pkl", "rb") as f:
         data = pickle.load(f)
     dataset = data["dataset"]
-    options = data["langevin_options"]
+    langevin_options = data["langevin_options"]
 
-    # Split the data into training and validation sets
-    rng, split_rng = jax.random.split(rng)
-    idxs = jax.random.permutation(split_rng, len(dataset.x0))
-    train_idxs = idxs[: int(0.8 * len(idxs))]
-    val_idxs = idxs[int(0.8 * len(idxs)) :]
-
-    train_dataset = jax.tree.map(lambda x: x[train_idxs], dataset)
-    val_dataset = jax.tree.map(lambda x: x[val_idxs], dataset)
-
-    # Initialize the score model
+    # Set up the training options and the score network
+    training_options = TrainingOptions(
+        batch_size=4096,
+        epochs=50,
+        learning_rate=1e-3,
+    )
     net = DiffusionPolicyMLP(layer_sizes=(128,) * 3)
-    dummy_x0 = jnp.zeros((2,))
-    dummy_U = jnp.zeros((HORIZON - 1, 2))
-    dummy_sigma = jnp.zeros((1,))
-    rng, params_rng = jax.random.split(rng)
-    params = net.init(params_rng, dummy_x0, dummy_U, dummy_sigma)
 
-    # Learning hyper-parameters
-    epochs = 100
-    batch_size = 4096
-    batches_per_epoch = len(train_dataset.x0) // batch_size
-    learning_rate = 1e-3
-
-    print("  Training dataset size:", train_dataset.x0.shape)
-    print("  Validation dataset size:", val_dataset.x0.shape)
-    print("  Batches per epoch:", batches_per_epoch)
-
-    # Training loop
-    optimizer = optax.adam(learning_rate)
-    opt_state = optimizer.init(params)
-
-    def loss_fn(params, x0, U, sigma, s):  # noqa: ANN001, N803 (ingore annotations)
-        """Loss function for score model training."""
-        s_pred = net.apply(params, x0, U, sigma)
-        err = jnp.square(s_pred - s)
-
-        # Weight the error by the noise level, as recommended by Song et al.
-        # Generative Modeling by Estimating Gradients of the Data Distribution,
-        # NeurIPS 2019.
-        err = jnp.einsum("ij,i...->i...", sigma**2, err)
-
-        return jnp.mean(err)
-
-    loss_and_grad = jax.value_and_grad(loss_fn)
-    jit_loss = jax.jit(loss_fn)
-
-    @jax.jit
-    def train_step(params, opt_state, rng):  # noqa: ANN001 (ingore annotations)
-        """Perform a single SGD step."""
-        # Sample a batch
-        idxs = jax.random.randint(rng, (batch_size,), 0, len(train_dataset.x0))
-        x0 = train_dataset.x0[idxs]
-        U = train_dataset.U[idxs]
-        sigma = train_dataset.sigma[idxs]
-        s = train_dataset.s[idxs]
-
-        # Compute the loss and gradients
-        loss, grad = loss_and_grad(params, x0, U, sigma, s)
-
-        # Update the parameters
-        updates, opt_state = optimizer.update(grad, opt_state)
-        params = optax.apply_updates(params, updates)
-
-        return params, opt_state, loss
-
+    # Train the score network
     st = time.time()
-    for epoch in range(epochs + 1):
-        for _ in range(batches_per_epoch):
-            rng, batch_rng = jax.random.split(rng)
-            params, opt_state, loss = train_step(params, opt_state, batch_rng)
-
-        if epoch % 10 == 0:
-            val_loss = jit_loss(
-                params,
-                val_dataset.x0,
-                val_dataset.U,
-                val_dataset.sigma,
-                val_dataset.s,
-            )
-            print(f"Epoch {epoch}, loss {loss:.4f}, val loss {val_loss:.4f}")
-    print(f"Score model training took {time.time() - st:.2f} seconds")
+    params, metrics = train(net, dataset, training_options)
+    print(f"Training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters
     fname = "/tmp/reach_avoid_score_model.pkl"
     with open(fname, "wb") as f:
-        pickle.dump({"params": params, "net": net, "options": options}, f)
+        data = {
+            "params": params,
+            "net": net,
+            "langevin_options": langevin_options,
+        }
+        pickle.dump(data, f)
     print(f"Saved trained model to {fname}")
 
 
@@ -360,7 +294,7 @@ def deploy_trained_model() -> None:
         data = pickle.load(f)
     params = data["params"]
     net = data["net"]
-    options = data["options"]
+    options = data["langevin_options"]
 
     # Decide how much noise to add in the Langevin sampling
     options = options.replace(noise_injection_level=0.0)
