@@ -350,11 +350,14 @@ def deploy_trained_model(
         fig, ax = plt.subplots()
         prob.plot_scenario()
 
-        path = ax.plot([], [], "o-")[0]
+        paths = []
+        for _ in range(num_samples):
+            paths.append(ax.plot([], [], "o-")[0])
 
         def update(i: int):
             ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
-            path.set_data(Xs[0, i, :, 0], Xs[0, i, :, 1])
+            for j, path in enumerate(paths):
+                path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 
         anim = FuncAnimation(
