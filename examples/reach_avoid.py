@@ -83,7 +83,6 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
-        noise_decay_rate=0.98,
         num_steps=100,
         step_size=0.01,
     )
@@ -100,7 +99,6 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
 
     # Generate the dataset
     sigma_L = langevin_options.starting_noise_level
-    gamma = langevin_options.noise_decay_rate
     L = langevin_options.num_noise_levels
 
     def scan_fn(rng: jax.random.PRNGKey, k: int):
@@ -110,7 +108,7 @@ def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
         U = U_demo[demo_idx]
 
         # Add noise to the demonstration
-        sigma = sigma_L * gamma ** (L - k - 1)
+        sigma = sigma_L * jnp.exp(-4 * (L - k) / L)
         rng, noise_rng = jax.random.split(rng)
         U_tilde = U + sigma * jax.random.normal(noise_rng, U.shape)
 
@@ -220,7 +218,6 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
-        noise_decay_rate=0.98,
         num_steps=100,
         step_size=0.01,
     )

@@ -17,7 +17,6 @@ def test_score_estimate() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=3,
         starting_noise_level=0.1,
-        noise_decay_rate=0.9,
         num_steps=4,
         step_size=0.1,
     )
@@ -56,7 +55,6 @@ def test_gen_from_state() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
         starting_noise_level=0.1,
-        noise_decay_rate=0.97,
         num_steps=8,
         step_size=0.1,
     )
@@ -98,7 +96,6 @@ def test_generate() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
         starting_noise_level=0.1,
-        noise_decay_rate=0.97,
         num_steps=8,
         step_size=0.1,
     )
@@ -131,7 +128,6 @@ def test_save_and_load() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
         starting_noise_level=0.1,
-        noise_decay_rate=0.97,
         num_steps=8,
         step_size=0.1,
     )

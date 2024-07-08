@@ -35,7 +35,6 @@ def test_annealed_langevin_sample() -> None:
     options = AnnealedLangevinOptions(
         num_noise_levels=100,
         starting_noise_level=2.0,
-        noise_decay_rate=0.97,
         num_steps=50,
         step_size=0.01,
         noise_injection_level=1.0,

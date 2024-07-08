@@ -36,12 +36,11 @@ class AnnealedLangevinOptions:
 
         pₖ(U | x₀) = ∫ p(Ũ | x₀)N(Ũ;U,σₖ²)dŨ
 
-    with a geometrically decreasing sequence of noise levels k = L, L-1, ..., 0.
+    with a decreasing sequence of noise levels σₖ.
 
     Attributes:
         num_noise_levels: The number of noise levels L.
         starting_noise_level: The starting noise level σ_L.
-        noise_decay_rate: The noise decay rate σₖ₋₁ = γ σₖ.
         num_steps: The number of Langevin steps to take at each noise level, N.
         step_size: The Langevin step size α.
         noise_injection_level: The noise injection level for each Langevin step.
@@ -51,7 +50,6 @@ class AnnealedLangevinOptions:
 
     num_noise_levels: int
     starting_noise_level: int
-    noise_decay_rate: float
     num_steps: int
     step_size: float
     noise_injection_level: float = 1.0
@@ -89,7 +87,6 @@ def annealed_langevin_sample(
     """
     L = options.num_noise_levels
     sigmaL = options.starting_noise_level
-    gamma = options.noise_decay_rate
     N = options.num_steps
     alpha = options.step_size
     beta = options.noise_injection_level
@@ -121,7 +118,11 @@ def annealed_langevin_sample(
 
     def annealed_langevin_step(carry: Tuple, k: int):
         """Generate N samples at the k-th noise level."""
-        (U, sigma, rng) = carry
+        U, rng = carry
+
+        # Set the noise level σₖ
+        t = (L - k) / L
+        sigma = sigmaL * jnp.exp(-4 * t)
 
         # Run Langevin dynamics for N steps, recording score estimates
         # along the way
@@ -130,15 +131,12 @@ def annealed_langevin_sample(
             langevin_step, (U, sigma, k, langevin_rng), jnp.arange(N)
         )
 
-        # Reduce the noise level σₖ₋₁ = γ σₖ
-        sigma *= gamma
-
-        return (U, sigma, rng), data
+        return (U, rng), data
 
     rng, sampling_rng = jax.random.split(rng)
-    (U, _, _), dataset = jax.lax.scan(
+    (U, _), dataset = jax.lax.scan(
         annealed_langevin_step,
-        (u_init, sigmaL, sampling_rng),
+        (u_init, sampling_rng),
         jnp.arange(L - 1, -1, -1),
     )
 
