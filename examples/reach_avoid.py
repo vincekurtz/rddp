@@ -5,6 +5,7 @@ import time
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
@@ -278,7 +279,9 @@ def fit_score_model() -> None:
     print(f"Saved trained model to {fname}")
 
 
-def deploy_trained_model() -> None:
+def deploy_trained_model(
+    plot: bool = True, animate: bool = False, save_path: str = None
+) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
 
@@ -306,7 +309,7 @@ def deploy_trained_model() -> None:
 
         # Do annealed langevin sampling
         rng, langevin_rng = jax.random.split(rng)
-        U, _ = annealed_langevin_sample(
+        U, data = annealed_langevin_sample(
             options=options,
             x0=x0,
             u_init=U_guess,
@@ -316,29 +319,60 @@ def deploy_trained_model() -> None:
             rng=langevin_rng,
         )
 
-        return U
+        return U, data
 
     # Optimize from a bunch of initial guesses
     num_samples = 32
     rng, opt_rng = jax.random.split(rng)
     opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
-    Us = jax.vmap(optimize_control_tape)(opt_rng)
+    Us, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
     Xs = jax.vmap(prob.sys.rollout, in_axes=(0, None))(Us, x0)
     costs = jax.vmap(prob.total_cost, in_axes=(0, None))(Us, x0)
     print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
 
     # Plot the sampled trajectories
-    plt.figure()
-    prob.plot_scenario()
-    for i in range(num_samples):
-        plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
-    plt.show()
+    if plot:
+        plt.figure()
+        prob.plot_scenario()
+        for i in range(num_samples):
+            plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
+        plt.show()
+
+    # Animate the trajectory generation process
+    if animate:
+        x0 = data.x0[:, :, -1, :]  # take the last sample at each noise level
+        U = data.U[:, :, -1, :]
+        sigma = data.sigma[:, :, -1]
+        Xs = jax.vmap(jax.vmap(prob.sys.rollout))(U, x0)
+
+        fig, ax = plt.subplots()
+        prob.plot_scenario()
+
+        paths = []
+        for _ in range(num_samples):
+            paths.append(ax.plot([], [], "o-")[0])
+
+        def update(i: int):
+            ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
+            for j, path in enumerate(paths):
+                path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
+            return path
+
+        anim = FuncAnimation(
+            fig, update, frames=options.num_noise_levels, interval=10
+        )
+        if save_path is not None:
+            anim.save(save_path, writer="ffmpeg", fps=60)
+            print(f"Saved animation to {save_path}")
+        plt.show()
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|demos]"
+    usage = (
+        "Usage: python reach_avoid.py [generate|fit|deploy|gd|demos|animate]"
+    )
 
     num_args = 1
     if len(sys.argv) != num_args + 1:
@@ -355,6 +389,8 @@ if __name__ == "__main__":
         deploy_trained_model()
     elif sys.argv[1] == "gd":
         solve_with_gradient_descent()
+    elif sys.argv[1] == "animate":
+        deploy_trained_model(plot=False, animate=True)
     else:
         print(usage)
         sys.exit(1)
