@@ -35,7 +35,6 @@ def test_training() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=100,
         starting_noise_level=0.5,
-        noise_decay_rate=0.97,
         num_steps=10,
         step_size=0.01,
     )
