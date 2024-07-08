@@ -283,8 +283,6 @@ def deploy_trained_model(
 ) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-
-    # Set up the system
     prob = ReachAvoid(num_steps=HORIZON)
 
     # Load the trained score network
@@ -337,7 +335,6 @@ def deploy_trained_model(
 
     # Plot the sampled trajectories
     if plot:
-        plt.figure()
         prob.plot_scenario()
         for i in range(num_samples):
             plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
@@ -352,19 +349,20 @@ def deploy_trained_model(
 
         fig, ax = plt.subplots()
         prob.plot_scenario()
-
-        paths = []
-        for _ in range(num_samples):
-            paths.append(ax.plot([], [], "o-")[0])
+        path = ax.plot([], [], "o-")[0]
 
         def update(i: int):
+            j, i = divmod(i, options.num_noise_levels)
+            j = j % num_samples
             ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
-            for j, path in enumerate(paths):
-                path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
+            path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 
         anim = FuncAnimation(
-            fig, update, frames=options.num_noise_levels, interval=10
+            fig,
+            update,
+            frames=options.num_noise_levels * num_samples,
+            interval=10,
         )
         if save_path is not None:
             anim.save(save_path, writer="ffmpeg", fps=60)
