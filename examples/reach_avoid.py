@@ -19,7 +19,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 25
+HORIZON = 10
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -212,10 +212,9 @@ def visualize_dataset(
 def generate_dataset(save: bool = False, plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
-    x0 = jnp.array([-0.1, -1.5])
 
     # Problem setup
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
+    prob = ReachAvoid(num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
@@ -286,8 +285,7 @@ def deploy_trained_model(
     rng = jax.random.PRNGKey(0)
 
     # Set up the system
-    x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
+    prob = ReachAvoid(num_steps=HORIZON)
 
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
@@ -306,6 +304,10 @@ def deploy_trained_model(
         U_guess = options.starting_noise_level * jax.random.normal(
             guess_rng, (prob.num_steps - 1, 2)
         )
+
+        # Set the initial state
+        rng, state_rng = jax.random.split(rng)
+        x0 = prob.sample_initial_state(state_rng)
 
         # Do annealed langevin sampling
         rng, langevin_rng = jax.random.split(rng)
@@ -327,9 +329,10 @@ def deploy_trained_model(
     opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
     Us, data = jax.vmap(optimize_control_tape)(opt_rng)
+    x0s = data.x0[:, -1, -1, :]  # sample, noise step, time step, dim
     print(f"Sample generation took {time.time() - st:.2f} seconds")
-    Xs = jax.vmap(prob.sys.rollout, in_axes=(0, None))(Us, x0)
-    costs = jax.vmap(prob.total_cost, in_axes=(0, None))(Us, x0)
+    Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
+    costs = jax.vmap(prob.total_cost)(Us, x0s)
     print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
 
     # Plot the sampled trajectories
