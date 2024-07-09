@@ -223,6 +223,8 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
+        save_path = None,
+        noise_levels_per_file= None,
         temperature=0.001,
         num_initial_states=256,
         num_rollouts_per_data_point=128,

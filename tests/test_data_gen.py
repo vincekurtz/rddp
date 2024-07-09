@@ -169,9 +169,42 @@ def test_save_and_load() -> None:
         p.unlink()
     local_dir.rmdir()
 
+def test_new_generate():
+    # Create a temporary directory
+    local_dir = Path("_test_save_dataset")
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a generator 
+    prob = ReachAvoid(num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        num_noise_levels=250,
+        starting_noise_level=0.1,
+        num_steps=8,
+        step_size=0.1,
+    )
+    gen_options = DatasetGenerationOptions(
+        save_path=local_dir,
+        noise_levels_per_file=50,
+        temperature=0.01,
+        num_initial_states=5,
+        num_rollouts_per_data_point=16,
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+
+    # Generate and save the dataset
+    rng = jax.random.PRNGKey(0)
+    rng, gen_rng = jax.random.split(rng)
+    generator.generate_and_save(gen_rng)
+    
+    # Remove the temporary directory
+    for p in local_dir.iterdir():
+        print(p)
+        p.unlink()
+    local_dir.rmdir()
 
 if __name__ == "__main__":
-    test_score_estimate()
-    test_gen_from_state()
-    test_generate()
-    test_save_and_load()
+    test_new_generate()
+    #test_score_estimate()
+    #test_gen_from_state()
+    #test_generate()
+    #test_save_and_load()
