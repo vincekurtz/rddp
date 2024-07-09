@@ -133,9 +133,10 @@ class DatasetGenerator:
         Args:
             rng: The random number generator key.
         """
-        sigmaL = self.langevin_options.starting_noise_level
+        # Generate the save path if it doesn't exist already
+        self.datagen_options.save_path.mkdir(parents=True, exist_ok=True)
 
-        # Some helper functions
+        # Some helpers
         sample_initial_state = jax.jit(jax.vmap(self.prob.sample_initial_state))
         langevin_sample = jax.vmap(
             lambda x0, u, rng, noise_range: annealed_langevin_sample(
@@ -149,6 +150,7 @@ class DatasetGenerator:
             in_axes=(0, 0, 0, None),
         )
         calc_cost = jax.jit(jax.vmap(self.prob.total_cost))
+        sigmaL = self.langevin_options.starting_noise_level
 
         # Sample initial states
         rng, state_rng = jax.random.split(rng)

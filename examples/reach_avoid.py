@@ -1,6 +1,7 @@
 import pickle
 import sys
 import time
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -70,87 +71,6 @@ def solve_with_gradient_descent(
     return U
 
 
-def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
-    """Generate data from "demonstrations" (a.k.a. gradient descent solutions).
-
-    Saves data to a file just like generate_dataset, but this data is based on
-    a more standard score matching framework.
-    """
-    rng = jax.random.PRNGKey(0)
-
-    # Problem setup
-    x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
-    langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
-        starting_noise_level=0.5,
-        num_steps=100,
-        step_size=0.01,
-    )
-    gen_options = DatasetGenerationOptions(
-        temperature=0.001,
-        num_initial_states=256,
-        num_rollouts_per_data_point=128,
-    )
-
-    # Solve gradient descent with two different guesses
-    U1 = solve_with_gradient_descent(plot=False, u_guess=1.0)
-    U2 = solve_with_gradient_descent(plot=False, u_guess=-1.0)
-    U_demo = jnp.array([U1, U2])
-
-    # Generate the dataset
-    sigma_L = langevin_options.starting_noise_level
-    L = langevin_options.num_noise_levels
-
-    def scan_fn(rng: jax.random.PRNGKey, k: int):
-        """Generate a data point by adding noise to a demonstration."""
-        rng, demo_rng = jax.random.split(rng)
-        demo_idx = jax.random.randint(demo_rng, (1,), 0, 2)[0]
-        U = U_demo[demo_idx]
-
-        # Add noise to the demonstration
-        sigma = sigma_L * jnp.exp(-4 * (L - k) / L)
-        rng, noise_rng = jax.random.split(rng)
-        U_tilde = U + sigma * jax.random.normal(noise_rng, U.shape)
-
-        # Estimate the score
-        s = (U - U_tilde) / sigma**2
-        return rng, (x0, U_tilde, s, jnp.array([k]), jnp.array([sigma]))
-
-    def generate_noised_data(rng: jax.random.PRNGKey):
-        """Generate some training data across all noise levels."""
-        rng, gen_rng = jax.random.split(rng)
-        rng, (x0, U, s, k, sigma) = jax.lax.scan(
-            scan_fn, gen_rng, jnp.arange(L)
-        )
-        return DiffusionDataset(x0, U, s, k, sigma)
-
-    num_data_points = (
-        gen_options.num_initial_states * langevin_options.num_steps
-    )
-    rng, gen_rng = jax.random.split(rng)
-    gen_rng = jax.random.split(gen_rng, num_data_points)
-    dataset = jax.vmap(generate_noised_data)(gen_rng)
-
-    # Flatten the dataset
-    dataset = jax.tree.map(
-        lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
-    )
-
-    # Save the data if requested
-    fname = "/tmp/reach_avoid_dataset.pkl"
-    if save:
-        with open(fname, "wb") as f:
-            pickle.dump(
-                {"dataset": dataset, "langevin_options": langevin_options}, f
-            )
-        print(f"Saved dataset to {fname}")
-
-    # Make some plots if requested
-    if plot:
-        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
-
-
 def visualize_dataset(
     dataset: DiffusionDataset, prob: ReachAvoid, num_noise_levels: int
 ) -> None:
@@ -209,10 +129,11 @@ def visualize_dataset(
     plt.show()
 
 
-def generate_dataset(save: bool = False, plot: bool = False) -> None:
+def generate_dataset(plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
     x0 = jnp.array([-0.1, -1.5])
+    save_path = Path("/tmp/reach_avoid/")
 
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
@@ -223,8 +144,8 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
-        save_path = None,
-        noise_levels_per_file= None,
+        save_path=save_path,
+        noise_levels_per_file=300,
         temperature=0.001,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
@@ -234,14 +155,11 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate(gen_rng)
+    dataset = generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
-    # Save the data if requested
-    fname = "/tmp/reach_avoid_dataset.pkl"
-    if save:
-        generator.save_dataset(dataset, fname)
-        print(f"Saved dataset to {fname}")
+    with open(save_path / "langevin_data_1.pkl", "rb") as f:
+        dataset = pickle.load(f)
 
     # Make some plots if requested
     if plot:
@@ -372,9 +290,7 @@ def deploy_trained_model(
 
 
 if __name__ == "__main__":
-    usage = (
-        "Usage: python reach_avoid.py [generate|fit|deploy|gd|demos|animate]"
-    )
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|animate]"
 
     num_args = 1
     if len(sys.argv) != num_args + 1:
@@ -382,9 +298,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if sys.argv[1] == "generate":
-        generate_dataset(save=True, plot=True)
-    elif sys.argv[1] == "demos":
-        generate_dataset_from_demos(save=True, plot=True)
+        generate_dataset(plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
