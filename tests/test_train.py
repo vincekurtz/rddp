@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from rddp.architectures import DiffusionPolicyMLP
-from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
 from rddp.utils import AnnealedLangevinOptions

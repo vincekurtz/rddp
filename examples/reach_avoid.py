@@ -1,7 +1,6 @@
 import pickle
 import sys
 import time
-from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import DiffusionPolicyMLP
-from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
@@ -133,7 +132,7 @@ def generate_dataset(plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
     x0 = jnp.array([-0.1, -1.5])
-    save_path = Path("/tmp/reach_avoid/")
+    save_path = "/tmp/reach_avoid/"
 
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
@@ -144,25 +143,23 @@ def generate_dataset(plot: bool = False) -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
-        save_path=save_path,
         noise_levels_per_file=300,
         temperature=0.001,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
+    generator = DatasetGenerator(prob, langevin_options, gen_options, save_path)
 
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate_and_save(gen_rng)
+    generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
-
-    with open(save_path / "langevin_data_1.pkl", "rb") as f:
-        dataset = pickle.load(f)
 
     # Make some plots if requested
     if plot:
+        with open(save_path + "diffusion_data_1.pkl", "rb") as f:
+            dataset = pickle.load(f)
         visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
 

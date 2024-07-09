@@ -4,7 +4,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
-from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.utils import AnnealedLangevinOptions, DiffusionDataset
 
@@ -21,13 +21,14 @@ def test_score_estimate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        save_path=None,
         noise_levels_per_file=1,
         temperature=0.1,
         num_initial_states=1,
         num_rollouts_per_data_point=10,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
+    generator = DatasetGenerator(
+        prob, langevin_options, gen_options, "/dev/null"
+    )
 
     # Set initial state
     x0 = jnp.array([0.1, -1.5])
@@ -64,13 +65,12 @@ def test_generate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        save_path=local_dir,
         noise_levels_per_file=50,
         temperature=0.01,
         num_initial_states=5,
         num_rollouts_per_data_point=16,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
+    generator = DatasetGenerator(prob, langevin_options, gen_options, local_dir)
 
     # Generate and save the dataset
     rng = jax.random.PRNGKey(0)
@@ -78,7 +78,7 @@ def test_generate() -> None:
     generator.generate_and_save(gen_rng)
 
     # Load one of the saved files
-    with open(local_dir / "langevin_data_1.pkl", "rb") as f:
+    with open(local_dir / "diffusion_data_1.pkl", "rb") as f:
         loaded = pickle.load(f)
 
     assert isinstance(loaded, DiffusionDataset)

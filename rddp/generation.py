@@ -1,5 +1,6 @@
 import pickle
-from pathlib import PosixPath
+from pathlib import Path
+from typing import Union
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,6 @@ class DatasetGenerationOptions:
     """Parameters for generating a diffusion policy dataset.
 
     Attributes:
-        save_path: The path to save the dataset to.
         temperature: The temperature λ of the target distribution.
         num_initial_states: The number of initial states x₀ to sample.
         noise_levels_per_file: The number of noise levels k to store per file.
@@ -22,7 +22,6 @@ class DatasetGenerationOptions:
                                      each score, M.
     """
 
-    save_path: PosixPath
     temperature: float
     num_initial_states: int
     noise_levels_per_file: int
@@ -46,6 +45,7 @@ class DatasetGenerator:
         prob: OptimalControlProblem,
         langevin_options: AnnealedLangevinOptions,
         datagen_options: DatasetGenerationOptions,
+        save_path: Union[str, Path],
     ):
         """Initialize the dataset generator.
 
@@ -53,10 +53,12 @@ class DatasetGenerator:
             prob: The optimal control problem defining the cost J(U | x₀).
             langevin_options: Sampling (e.g., temperature) settings.
             datagen_options: Dataset generation (e.g., num rollouts) settings.
+            save_path: The path to save the generated dataset to
         """
         self.prob = prob
         self.langevin_options = langevin_options
         self.datagen_options = datagen_options
+        self.save_path = Path(save_path)
 
         # Ensure that we can split the dataset into equal-sized files
         assert (
@@ -133,8 +135,11 @@ class DatasetGenerator:
         Args:
             rng: The random number generator key.
         """
-        # Generate the save path if it doesn't exist already
-        self.datagen_options.save_path.mkdir(parents=True, exist_ok=True)
+        # Generate the save path if it doesn't exist already, and remove any
+        # existing files
+        self.save_path.mkdir(parents=True, exist_ok=True)
+        for p in self.save_path.iterdir():
+            p.unlink()
 
         # Some helpers
         sample_initial_state = jax.jit(jax.vmap(self.prob.sample_initial_state))
@@ -203,14 +208,10 @@ class DatasetGenerator:
             )
 
             # Save the dataset to a file
-            with open(
-                self.datagen_options.save_path / f"langevin_data_{i}.pkl", "wb"
-            ) as f:
+            with open(self.save_path / f"diffusion_data_{i}.pkl", "wb") as f:
                 pickle.dump(flat_data, f)
 
         # Save langevin sampling options, since we'll use them again when we
         # deploy the trained policy.
-        with open(
-            self.datagen_options.save_path / "langevin_options.pkl", "wb"
-        ) as f:
+        with open(self.save_path / "langevin_options.pkl", "wb") as f:
             pickle.dump(self.langevin_options, f)
