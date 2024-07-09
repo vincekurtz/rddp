@@ -21,6 +21,8 @@ def test_score_estimate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
+        save_path=None,
+        noise_levels_per_file=1,
         temperature=0.1,
         num_initial_states=1,
         num_rollouts_per_data_point=10,
@@ -47,134 +49,13 @@ def test_score_estimate() -> None:
     assert prob.total_cost(U, x0) > prob.total_cost(U + sigma**2 * s, x0)
 
 
-def test_gen_from_state() -> None:
-    """Test dataset generation from a single initial state."""
-    rng = jax.random.PRNGKey(0)
-
-    prob = ReachAvoid(num_steps=20)
-    langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=250,
-        starting_noise_level=0.1,
-        num_steps=8,
-        step_size=0.1,
-    )
-    gen_options = DatasetGenerationOptions(
-        temperature=0.01,
-        num_initial_states=1,
-        num_rollouts_per_data_point=16,
-    )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
-
-    # Set the initial state
-    x0 = jnp.array([0.1, -1.5])
-
-    # Generate the dataset
-    rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate_from_state(x0, gen_rng)
-    assert isinstance(dataset, DiffusionDataset)
-
-    # Check sizes
-    L = langevin_options.num_noise_levels
-    N = langevin_options.num_steps
-    assert dataset.x0.shape == (L, N, 2)
-    assert dataset.U.shape == (L, N, prob.num_steps - 1, 2)
-    assert dataset.s.shape == (L, N, prob.num_steps - 1, 2)
-    assert dataset.sigma.shape == (L, N, 1)
-
-    # Check that the costs decreased
-    costs = jax.vmap(jax.vmap(prob.total_cost))(dataset.U, dataset.x0)
-    start_costs = costs[0, ...]
-    final_costs = costs[-1, ...]
-    assert jnp.all(final_costs < start_costs)
-
-
 def test_generate() -> None:
-    """Test the main dataset generation function."""
-    rng = jax.random.PRNGKey(0)
-
-    prob = ReachAvoid(num_steps=20)
-    langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=250,
-        starting_noise_level=0.1,
-        num_steps=8,
-        step_size=0.1,
-    )
-    gen_options = DatasetGenerationOptions(
-        temperature=0.01,
-        num_initial_states=2,
-        num_rollouts_per_data_point=16,
-    )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
-
-    rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate(gen_rng)
-    assert isinstance(dataset, DiffusionDataset)
-
-    # Check sizes
-    Nx = gen_options.num_initial_states
-    L = langevin_options.num_noise_levels
-    N = langevin_options.num_steps
-
-    assert dataset.x0.shape == (Nx * L * N, 2)
-    assert dataset.U.shape == (Nx * L * N, prob.num_steps - 1, 2)
-    assert dataset.s.shape == (Nx * L * N, prob.num_steps - 1, 2)
-    assert dataset.k.shape == (Nx * L * N, 1)
-    assert dataset.sigma.shape == (Nx * L * N, 1)
-
-
-def test_save_and_load() -> None:
-    """Test saving and loading a dataset."""
-    prob = ReachAvoid(num_steps=20)
-    langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=250,
-        starting_noise_level=0.1,
-        num_steps=8,
-        step_size=0.1,
-    )
-    gen_options = DatasetGenerationOptions(
-        temperature=0.01,
-        num_initial_states=1,
-        num_rollouts_per_data_point=16,
-    )
-    generator = DatasetGenerator(prob, langevin_options, gen_options)
-
-    # Create a dummy dataset
-    rng = jax.random.PRNGKey(0)
-    rng, x0_rng, U_rng, s_rng, k_rng, sigma_rng = jax.random.split(rng, 6)
-    x0 = jax.random.normal(x0_rng, (8, 2))
-    U = jax.random.normal(U_rng, (8, 19, 2))
-    s = jax.random.normal(s_rng, (8, 19, 2))
-    k = jax.random.randint(k_rng, (8, 1), 0, 250)
-    sigma = jax.random.normal(sigma_rng, (8, 1))
-    dataset = DiffusionDataset(x0, U, s, k, sigma)
-
+    """Test the dataset generation process."""
     # Create a temporary directory
     local_dir = Path("_test_save_dataset")
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save the dataset
-    generator.save_dataset(dataset, local_dir / "dataset.pkl")
-
-    # Load the dataset
-    with open(local_dir / "dataset.pkl", "rb") as f:
-        loaded = pickle.load(f)
-    loaded_dataset = loaded["dataset"]
-    loaded_options = loaded["langevin_options"]
-
-    assert isinstance(loaded_dataset, DiffusionDataset)
-    assert isinstance(loaded_options, AnnealedLangevinOptions)
-
-    # Remove the temporary directory
-    for p in local_dir.iterdir():
-        p.unlink()
-    local_dir.rmdir()
-
-def test_new_generate():
-    # Create a temporary directory
-    local_dir = Path("_test_save_dataset")
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create a generator 
+    # Create a generator
     prob = ReachAvoid(num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
@@ -195,16 +76,29 @@ def test_new_generate():
     rng = jax.random.PRNGKey(0)
     rng, gen_rng = jax.random.split(rng)
     generator.generate_and_save(gen_rng)
-    
+
+    # Load one of the saved files
+    with open(local_dir / "langevin_data_1.pkl", "rb") as f:
+        loaded = pickle.load(f)
+
+    assert isinstance(loaded, DiffusionDataset)
+    # Check sizes
+    Nx = gen_options.num_initial_states
+    K = gen_options.noise_levels_per_file
+    N = langevin_options.num_steps
+
+    assert loaded.x0.shape == (Nx * K * N, 2)
+    assert loaded.U.shape == (Nx * K * N, prob.num_steps - 1, 2)
+    assert loaded.s.shape == (Nx * K * N, prob.num_steps - 1, 2)
+    assert loaded.k.shape == (Nx * K * N, 1)
+    assert loaded.sigma.shape == (Nx * K * N, 1)
+
     # Remove the temporary directory
     for p in local_dir.iterdir():
-        print(p)
         p.unlink()
     local_dir.rmdir()
 
+
 if __name__ == "__main__":
-    test_new_generate()
-    #test_score_estimate()
-    #test_gen_from_state()
-    #test_generate()
-    #test_save_and_load()
+    test_score_estimate()
+    test_generate()
