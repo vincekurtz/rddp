@@ -74,6 +74,17 @@ def test_annealed_langevin_sample() -> None:
     assert zero_noise_cost < 1e-4  # noqa: PLR2004
     assert zero_noise_cost < cost
 
+    # Check that we can just do a subset of the steps.
+    U, data = annealed_langevin_sample(
+        options=options,
+        x0=jnp.zeros(3),
+        u_init=jnp.zeros(2),
+        score_fn=score_fn,
+        rng=langevin_rng,
+        noise_range=(100, 90),
+    )
+    assert data.U.shape == (10, options.num_steps, 2)
+
 
 if __name__ == "__main__":
     test_annealed_langevin_sample()

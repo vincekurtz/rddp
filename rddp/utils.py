@@ -63,6 +63,7 @@ def annealed_langevin_sample(
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
     ],
     rng: jax.random.PRNGKey,
+    noise_range: Tuple[int, int] = None,
 ) -> Tuple[jnp.ndarray, DiffusionDataset]:
     """Generate a sample from the target distribution p(U | x₀).
 
@@ -84,9 +85,21 @@ def annealed_langevin_sample(
         u_init: An initial control sequence, typically U ~ N(0, σ_L²).
         score_fn: A (possibly stochastic) score estimate function ŝ(x₀, U, σ).
         rng: The random number generator key.
+        noise_range: The range of noise levels to sample from. If None, sample
+            from L to 0. This option is useful for dataset generation, where we
+            want to save out to a file during the annealing process.
     """
     L = options.num_noise_levels
     sigmaL = options.starting_noise_level
+
+    if noise_range is None:
+        start_step, end_step = L, 0
+    else:
+        start_step, end_step = noise_range
+        assert start_step >= end_step, "start_step should be >= end_step"
+        assert start_step <= L, "start_step should be <= L"
+        assert end_step >= 0, "end_step should be >= 0"
+
     N = options.num_steps
     alpha = options.step_size
     beta = options.noise_injection_level
@@ -137,7 +150,7 @@ def annealed_langevin_sample(
     (U, _), dataset = jax.lax.scan(
         annealed_langevin_step,
         (u_init, sampling_rng),
-        jnp.arange(L - 1, -1, -1),
+        jnp.arange(start_step - 1, end_step - 1, -1),
     )
 
     return U, dataset
