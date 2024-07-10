@@ -65,8 +65,9 @@ class TorchDiffusionDataset(Dataset):
         U = np.array(data.U, dtype=jnp.float32)
         s = np.array(data.s, dtype=jnp.float32)
         sigma = np.array(data.sigma, dtype=jnp.float32)
+        k = np.array(data.k, dtype=jnp.float32)
 
-        return {"x0": x0, "U": U, "s": s, "sigma": sigma}
+        return {"x0": x0, "U": U, "s": s, "sigma": sigma, "k": k}
 
 
 class TorchDiffusionDataLoader(DataLoader):
