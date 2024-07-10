@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from torch.utils.data import DataLoader, Dataset, default_collate
 
-from rddp.utils import DiffusionDataset
+from rddp.utils import DiffusionData
 
 
 class TorchDiffusionDataset(Dataset):
@@ -25,7 +25,7 @@ class TorchDiffusionDataset(Dataset):
                 diffusion_data_N.pkl
                 langevin_options.pkl
 
-        Each pickle file contains a DiffusionDataset object with
+        Each pickle file contains a DiffusionData object with
 
         Args:
             save_path: The path to the saved dataset.
@@ -42,7 +42,7 @@ class TorchDiffusionDataset(Dataset):
             if p.suffix == ".pkl" and "langevin_options" not in p.stem:
                 with open(p, "rb") as f:
                     data = pickle.load(f)
-                    assert isinstance(data, DiffusionDataset)
+                    assert isinstance(data, DiffusionData)
                     self.sets.append(data)
 
                     if self.data_points_per_set is None:
@@ -56,7 +56,7 @@ class TorchDiffusionDataset(Dataset):
         """Return the number of data points in the dataset."""
         return self.data_points_per_set * len(self.sets)
 
-    def __getitem__(self, idx: int) -> DiffusionDataset:
+    def __getitem__(self, idx: int) -> DiffusionData:
         """Return the idx-th data point in the dataset."""
         set_idx, data_idx = divmod(idx, self.data_points_per_set)
         data = jax.tree.map(lambda x: x[data_idx], self.sets[set_idx])
@@ -78,7 +78,7 @@ class TorchDiffusionDataLoader(DataLoader):
         super().__init__(
             dataset,
             collate_fn=lambda batch: jax.tree_util.tree_map(
-                np.asarray, default_collate(batch)
+                jnp.asarray, default_collate(batch)
             ),
             **kwargs,
         )

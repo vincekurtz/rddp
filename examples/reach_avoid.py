@@ -13,7 +13,7 @@ from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
-    DiffusionDataset,
+    DiffusionData,
     annealed_langevin_sample,
     sample_dataset,
 )
@@ -71,7 +71,7 @@ def solve_with_gradient_descent(
 
 
 def visualize_dataset(
-    dataset: DiffusionDataset, prob: ReachAvoid, num_noise_levels: int
+    dataset: DiffusionData, prob: ReachAvoid, num_noise_levels: int
 ) -> None:
     """Make some plots of the generated dataset.
 

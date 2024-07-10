@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
-from rddp.utils import AnnealedLangevinOptions, DiffusionDataset
+from rddp.utils import AnnealedLangevinOptions, DiffusionData
 
 
 def test_score_estimate() -> None:
@@ -79,7 +79,7 @@ def test_generate() -> None:
     with open(local_dir / "diffusion_data_1.pkl", "rb") as f:
         loaded = pickle.load(f)
 
-    assert isinstance(loaded, DiffusionDataset)
+    assert isinstance(loaded, DiffusionData)
     # Check sizes
     Nx = gen_options.num_initial_states
     K = gen_options.noise_levels_per_file

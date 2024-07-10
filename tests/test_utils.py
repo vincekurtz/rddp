@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from rddp.utils import (
     AnnealedLangevinOptions,
-    DiffusionDataset,
+    DiffusionData,
     annealed_langevin_sample,
 )
 
@@ -49,7 +49,7 @@ def test_annealed_langevin_sample() -> None:
         rng=langevin_rng,
     )
 
-    assert isinstance(data, DiffusionDataset)
+    assert isinstance(data, DiffusionData)
     assert data.x0.shape == (options.num_noise_levels, options.num_steps, 3)
     assert data.U.shape == (options.num_noise_levels, options.num_steps, 2)
     assert data.s.shape == data.U.shape

@@ -6,7 +6,7 @@ from flax.struct import dataclass
 
 
 @dataclass
-class DiffusionDataset:
+class DiffusionData:
     """Training data for a diffusion policy.
 
     Attributes:
@@ -64,7 +64,7 @@ def annealed_langevin_sample(
     ],
     rng: jax.random.PRNGKey,
     noise_range: Tuple[int, int] = None,
-) -> Tuple[jnp.ndarray, DiffusionDataset]:
+) -> Tuple[jnp.ndarray, DiffusionData]:
     """Generate a sample from the target distribution p(U | x₀).
 
     Annealed Langevin samples intermediate distributions
@@ -119,7 +119,7 @@ def annealed_langevin_sample(
         U_new = U + eps * s + beta * jnp.sqrt(2 * eps) * z
 
         # Record training data
-        data = DiffusionDataset(
+        data = DiffusionData(
             x0=x0,
             U=U,
             s=s,
@@ -157,8 +157,8 @@ def annealed_langevin_sample(
 
 
 def sample_dataset(
-    dataset: DiffusionDataset, k: int, num_samples: int, rng: jax.random.PRNGKey
-) -> DiffusionDataset:
+    dataset: DiffusionData, k: int, num_samples: int, rng: jax.random.PRNGKey
+) -> DiffusionData:
     """Extract some random samples from the dataset at a specific noise level.
 
     This is particuarly useful for visualizing the training dataset.
@@ -182,7 +182,7 @@ def sample_dataset(
     idxs = jax.random.permutation(sample_rng, idxs)
     idxs = idxs[:num_samples]
 
-    return DiffusionDataset(
+    return DiffusionData(
         x0=dataset.x0[idxs],
         U=dataset.U[idxs],
         s=dataset.s[idxs],
