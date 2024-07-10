@@ -26,9 +26,7 @@ def test_score_estimate() -> None:
         num_initial_states=1,
         num_rollouts_per_data_point=10,
     )
-    generator = DatasetGenerator(
-        prob, langevin_options, gen_options, "/dev/null"
-    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Set initial state
     x0 = jnp.array([0.1, -1.5])
@@ -70,12 +68,12 @@ def test_generate() -> None:
         num_initial_states=5,
         num_rollouts_per_data_point=16,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options, local_dir)
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate and save the dataset
     rng = jax.random.PRNGKey(0)
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate_and_save(gen_rng, local_dir)
 
     # Load one of the saved files
     with open(local_dir / "diffusion_data_1.pkl", "rb") as f:

@@ -12,7 +12,7 @@ from rddp.utils import AnnealedLangevinOptions
 def test_data_loader() -> None:
     """Test the torch data loader."""
     # Create a temporary directory
-    local_dir = Path("_test_save_dataset")
+    local_dir = Path("_test_data_loader")
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a generator
@@ -29,12 +29,12 @@ def test_data_loader() -> None:
         num_initial_states=3,
         num_rollouts_per_data_point=16,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options, local_dir)
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate and save the dataset
     rng = jax.random.PRNGKey(0)
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate_and_save(gen_rng, local_dir)
 
     # Create a torch dataset from the saved data
     torch_dataset = TorchDiffusionDataset(local_dir)

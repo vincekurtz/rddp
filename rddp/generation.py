@@ -45,7 +45,6 @@ class DatasetGenerator:
         prob: OptimalControlProblem,
         langevin_options: AnnealedLangevinOptions,
         datagen_options: DatasetGenerationOptions,
-        save_path: Union[str, Path],
     ):
         """Initialize the dataset generator.
 
@@ -53,12 +52,10 @@ class DatasetGenerator:
             prob: The optimal control problem defining the cost J(U | x₀).
             langevin_options: Sampling (e.g., temperature) settings.
             datagen_options: Dataset generation (e.g., num rollouts) settings.
-            save_path: The path to save the generated dataset to
         """
         self.prob = prob
         self.langevin_options = langevin_options
         self.datagen_options = datagen_options
-        self.save_path = Path(save_path)
 
         # Ensure that we can split the dataset into equal-sized files
         assert (
@@ -125,7 +122,9 @@ class DatasetGenerator:
 
         return score_estimate
 
-    def generate_and_save(self, rng: jax.random.PRNGKey) -> None:
+    def generate_and_save(
+        self, rng: jax.random.PRNGKey, save_path: Union[str, Path]
+    ) -> None:
         """Generate and save a dataset of noised score estimates.
 
         The dataset is split into multiple files, each containing a subset of
@@ -134,11 +133,14 @@ class DatasetGenerator:
 
         Args:
             rng: The random number generator key.
+            save_path: The path to save the generated dataset to.
         """
+        save_path = Path(save_path)
+
         # Generate the save path if it doesn't exist already, and remove any
         # existing files
-        self.save_path.mkdir(parents=True, exist_ok=True)
-        for p in self.save_path.iterdir():
+        save_path.mkdir(parents=True, exist_ok=True)
+        for p in save_path.iterdir():
             p.unlink()
 
         # Some helpers
@@ -208,10 +210,10 @@ class DatasetGenerator:
             )
 
             # Save the dataset to a file
-            with open(self.save_path / f"diffusion_data_{i}.pkl", "wb") as f:
+            with open(save_path / f"diffusion_data_{i}.pkl", "wb") as f:
                 pickle.dump(flat_data, f)
 
         # Save langevin sampling options, since we'll use them again when we
         # deploy the trained policy.
-        with open(self.save_path / "langevin_options.pkl", "wb") as f:
+        with open(save_path / "langevin_options.pkl", "wb") as f:
             pickle.dump(self.langevin_options, f)
