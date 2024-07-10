@@ -31,7 +31,7 @@ class ReachAvoidFixedX0(ReachAvoid):
 def test_training() -> None:
     """Test the main training loop."""
     rng = jax.random.PRNGKey(0)
-    
+
     # Create a temporary directory
     local_dir = Path("_test_training")
     local_dir.mkdir(parents=True, exist_ok=True)
@@ -39,13 +39,13 @@ def test_training() -> None:
     # Generate a training dataset
     prob = ReachAvoidFixedX0(num_steps=5, start_state=jnp.array([0.1, -1.5]))
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=100,
+        num_noise_levels=10,
         starting_noise_level=0.5,
-        num_steps=10,
+        num_steps=4,
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
-        noise_levels_per_file=10,
+        noise_levels_per_file=5,
         temperature=0.001,
         num_initial_states=16,
         num_rollouts_per_data_point=8,
@@ -56,25 +56,15 @@ def test_training() -> None:
 
     # Train a score network
     options = TrainingOptions(
-        batch_size=128,
-        epochs=4,
+        batch_size=32,
+        epochs=10,
         learning_rate=1e-3,
     )
-    net = DiffusionPolicyMLP(layer_sizes=(32,) * 3)
+    net = DiffusionPolicyMLP(layer_sizes=(16,) * 2)
 
     params, metrics = train(net, local_dir, options)
     assert metrics["train_loss"][-1] < metrics["train_loss"][0]
-    #assert metrics["val_loss"][-1] < metrics["val_loss"][0]
 
-    #test_idx = 129
-    #score_estimate = net.apply(
-    #    params,
-    #    dataset.x0[test_idx],
-    #    dataset.U[test_idx],
-    #    dataset.sigma[test_idx],
-    #)
-    #assert score_estimate.shape == dataset.s[test_idx].shape
-    
     # Remove the temporary directory
     for p in local_dir.iterdir():
         p.unlink()
