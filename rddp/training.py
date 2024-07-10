@@ -127,7 +127,7 @@ def train(
     # Create a torch dataset and data loader
     dataset = TorchDiffusionDataset(data_path)
     data_loader = TorchDiffusionDataLoader(
-        dataset, batch_size=options.batch_size, shuffle=True
+        dataset, batch_size=options.batch_size, shuffle=True, num_workers=0
     )
 
     # Initialize the training state
@@ -138,10 +138,13 @@ def train(
 
     # Train the model
     metrics = {"train_loss": [], "val_loss": []}
+    print("Starting training, dataset has length", len(dataset))
     for epoch in range(options.epochs):
         for batch in data_loader:
+            print("got batch")
             loss, grad = apply_model(train_state, batch)
             train_state = update_model(train_state, grad)
+            print("batch loss", loss)
 
         # TODO: compute some sort of validation loss
 

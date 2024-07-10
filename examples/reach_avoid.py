@@ -148,15 +148,16 @@ def generate_dataset(plot: bool = False) -> None:
         num_initial_states=256,
         num_rollouts_per_data_point=128,
     )
-    generator = DatasetGenerator(prob, langevin_options, gen_options, save_path)
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate_and_save(gen_rng, save_path)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested
+    # TODO: plot the full dataset using the torch dataloader
     if plot:
         with open(save_path + "diffusion_data_1.pkl", "rb") as f:
             dataset = pickle.load(f)
@@ -165,15 +166,16 @@ def generate_dataset(plot: bool = False) -> None:
 
 def fit_score_model() -> None:
     """Fit a simple score model to the generated data."""
-    # Load training data from a file (must run generate_dataset first)
-    with open("/tmp/reach_avoid_dataset.pkl", "rb") as f:
-        data = pickle.load(f)
-    dataset = data["dataset"]
-    langevin_options = data["langevin_options"]
+    # Specify location of the training data
+    data_dir = "/tmp/reach_avoid/"
+
+    # Load the langiven sampling options
+    with open(data_dir + "langevin_options.pkl", "rb") as f:
+        langevin_options = pickle.load(f)
 
     # Set up the training options and the score network
     training_options = TrainingOptions(
-        batch_size=4096,
+        batch_size=8192,
         epochs=50,
         learning_rate=1e-3,
     )
@@ -181,7 +183,7 @@ def fit_score_model() -> None:
 
     # Train the score network
     st = time.time()
-    params, metrics = train(net, dataset, training_options)
+    params, metrics = train(net, data_dir, training_options)
     print(f"Training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters

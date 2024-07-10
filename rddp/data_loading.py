@@ -78,7 +78,7 @@ class TorchDiffusionDataLoader(DataLoader):
         super().__init__(
             dataset,
             collate_fn=lambda batch: jax.tree_util.tree_map(
-                jnp.asarray, default_collate(batch)
+                np.asarray, default_collate(batch)
             ),
             **kwargs,
         )
