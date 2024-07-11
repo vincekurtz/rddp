@@ -24,7 +24,7 @@ class DatasetGenerationOptions:
 
     temperature: float
     num_initial_states: int
-    noise_levels_per_file: int
+    save_every: int
     num_rollouts_per_data_point: int
 
 
