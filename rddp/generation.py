@@ -76,6 +76,7 @@ class DatasetGenerator:
         # Save langevin sampling options, since we'll use them again when we
         # deploy the trained policy.
         save_path = Path(datagen_options.save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
         with open(save_path / "langevin_options.pkl", "wb") as f:
             pickle.dump(self.langevin_options, f)
 

@@ -10,7 +10,7 @@ from matplotlib.animation import FuncAnimation
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
-from rddp.training import TrainingOptions, train
+#from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
@@ -19,7 +19,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 25
+HORIZON = 40
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -143,17 +143,18 @@ def generate_dataset(plot: bool = False) -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
-        noise_levels_per_file=300,
         temperature=0.001,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
+        save_every=100,
+        save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng, save_path)
+    generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested
@@ -297,7 +298,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if sys.argv[1] == "generate":
-        generate_dataset(plot=True)
+        generate_dataset(plot=False)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
