@@ -1,13 +1,19 @@
 import pickle
+from datetime import datetime
 from pathlib import Path
 from typing import Union
 
+import h5py
 import jax
 import jax.numpy as jnp
 from flax.struct import dataclass
 
 from rddp.tasks.base import OptimalControlProblem
-from rddp.utils import AnnealedLangevinOptions, annealed_langevin_sample
+from rddp.utils import (
+    AnnealedLangevinOptions,
+    DiffusionDataset,
+    annealed_langevin_sample,
+)
 
 
 @dataclass
@@ -17,15 +23,17 @@ class DatasetGenerationOptions:
     Attributes:
         temperature: The temperature λ of the target distribution.
         num_initial_states: The number of initial states x₀ to sample.
-        noise_levels_per_file: The number of noise levels k to store per file.
         num_rollouts_per_data_point: The number of rollouts used to estimate
                                      each score, M.
+        save_every: The number of noise levels to generate between saves.
+        save_path: The directory to save the generated dataset to.
     """
 
     temperature: float
     num_initial_states: int
-    save_every: int
     num_rollouts_per_data_point: int
+    save_every: int
+    save_path: Union[str, Path]
 
 
 class DatasetGenerator:
@@ -59,14 +67,36 @@ class DatasetGenerator:
 
         # Ensure that we can split the dataset into equal-sized files
         assert (
-            langevin_options.num_noise_levels
-            % datagen_options.noise_levels_per_file
-            == 0
+            langevin_options.num_noise_levels % datagen_options.save_every == 0
         )
-        self.num_files = (
-            langevin_options.num_noise_levels
-            // datagen_options.noise_levels_per_file
+        self.num_saves = (
+            langevin_options.num_noise_levels // datagen_options.save_every
         )
+
+        # Save langevin sampling options, since we'll use them again when we
+        # deploy the trained policy.
+        save_path = Path(datagen_options.save_path)
+        with open(save_path / "langevin_options.pkl", "wb") as f:
+            pickle.dump(self.langevin_options, f)
+
+        # Initialize the hdf5 file to save the dataset to
+        self.h5_path = save_path / "dataset.h5"
+        x_shape = prob.sys.state_shape
+        U_shape = (prob.num_steps - 1, *prob.sys.action_shape)
+        with h5py.File(self.h5_path, "w") as f:
+            f.create_dataset(
+                "x0", (0, *x_shape), maxshape=(None, *x_shape), dtype="float32"
+            )
+            f.create_dataset(
+                "U", (0, *U_shape), maxshape=(None, *U_shape), dtype="float32"
+            )
+            f.create_dataset(
+                "s", (0, *U_shape), maxshape=(None, *U_shape), dtype="float32"
+            )
+            f.create_dataset("k", (0, 1), maxshape=(None, 1), dtype="int32")
+            f.create_dataset(
+                "sigma", (0, 1), maxshape=(None, 1), dtype="float32"
+            )
 
     def estimate_noised_score(
         self,
@@ -122,28 +152,41 @@ class DatasetGenerator:
 
         return score_estimate
 
-    def generate_and_save(
-        self, rng: jax.random.PRNGKey, save_path: Union[str, Path]
-    ) -> None:
-        """Generate and save a dataset of noised score estimates.
+    def save_dataset(self, dataset: DiffusionDataset) -> None:
+        """Add a dataset to the hdf5 file.
 
-        The dataset is split into multiple files, each containing a subset of
-        the noise levels, to avoid OOM errors when dealing with large systems
-        or many initial conditions.
+        Args:
+            dataset: The (flattened) dataset to save.
+        """
+        with h5py.File(self.h5_path, "a") as f:
+            x0, U, s, k, sigma = f["x0"], f["U"], f["s"], f["k"], f["sigma"]
+            num_existing_data_points = x0.shape[0]
+            num_new_data_points = dataset.x0.shape[0]
+            new_size = num_existing_data_points + num_new_data_points
+
+            # Resize datasets to accomodate new data
+            x0.resize(new_size, axis=0)
+            U.resize(new_size, axis=0)
+            s.resize(new_size, axis=0)
+            k.resize(new_size, axis=0)
+            sigma.resize(new_size, axis=0)
+
+            # Write the new data
+            x0[num_existing_data_points:] = dataset.x0
+            U[num_existing_data_points:] = dataset.U
+            s[num_existing_data_points:] = dataset.s
+            k[num_existing_data_points:] = dataset.k
+            sigma[num_existing_data_points:] = dataset.sigma
+
+    def generate_and_save(self, rng: jax.random.PRNGKey) -> None:
+        """Generate a dataset of noised score values and save it to disk.
 
         Args:
             rng: The random number generator key.
-            save_path: The path to save the generated dataset to.
         """
-        save_path = Path(save_path)
+        start_time = datetime.now()
 
-        # Generate the save path if it doesn't exist already, and remove any
-        # existing files
-        save_path.mkdir(parents=True, exist_ok=True)
-        for p in save_path.iterdir():
-            p.unlink()
-
-        # Some helpers
+        # Some helper functions
         sample_initial_state = jax.jit(jax.vmap(self.prob.sample_initial_state))
         langevin_sample = jax.vmap(
             lambda x0, u, rng, noise_range: annealed_langevin_sample(
@@ -180,12 +223,13 @@ class DatasetGenerator:
         costs = calc_cost(U, x0)
         print(
             f"σₖ = {sigmaL:.4f}, "
-            f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}"
+            f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}, "
+            f"time = {datetime.now() - start_time}"
         )
 
-        for i in range(self.num_files, 0, -1):
-            start_k = i * self.datagen_options.noise_levels_per_file
-            end_k = (i - 1) * self.datagen_options.noise_levels_per_file
+        for i in range(self.num_saves, 0, -1):
+            start_k = i * self.datagen_options.save_every
+            end_k = (i - 1) * self.datagen_options.save_every
 
             # Generate data with annealed Langevin sampling at the given noise
             # levels.
@@ -195,25 +239,17 @@ class DatasetGenerator:
             )
             U, dataset = langevin_sample(x0, U, langevin_rng, (start_k, end_k))
 
+            # Save the dataset
+            flat_data = jax.tree.map(
+                lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
+            )
+            self.save_dataset(flat_data)
+
             # Print a quick performance summary
             costs = calc_cost(U, x0)
             sigma = dataset.sigma[0, -1, 0, 0]  # state, noise level, step, dim
             print(
                 f"σₖ = {sigma:.4f}, "
-                f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}"
+                f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}, "
+                f"time = {datetime.now() - start_time}"
             )
-
-            # Flatten the data across initial states, noise levels, and data
-            # points.
-            flat_data = jax.tree.map(
-                lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
-            )
-
-            # Save the dataset to a file
-            with open(save_path / f"diffusion_data_{i}.pkl", "wb") as f:
-                pickle.dump(flat_data, f)
-
-        # Save langevin sampling options, since we'll use them again when we
-        # deploy the trained policy.
-        with open(save_path / "langevin_options.pkl", "wb") as f:
-            pickle.dump(self.langevin_options, f)

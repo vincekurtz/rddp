@@ -23,7 +23,7 @@ def save_toy_dataset(num_samples: int = 1000) -> None:
     rng = jax.random.PRNGKey(0)
 
     # Create an empty hdf5 file
-    with h5py.File("toy_dataset.h5", "w") as f:
+    with h5py.File("/tmp/toy_dataset.h5", "w") as f:
         f.create_dataset("x0", (0, 2), maxshape=(None, 2), dtype="float32")
         f.create_dataset(
             "U", (0, 49, 2), maxshape=(None, 49, 2), dtype="float32"
@@ -47,7 +47,7 @@ def save_toy_dataset(num_samples: int = 1000) -> None:
         dataset = jit_generate(gen_rng)
 
         # Save the dataset to the hdf5 file
-        with h5py.File("toy_dataset.h5", "a") as f:
+        with h5py.File("/tmp/toy_dataset.h5", "a") as f:
             x0_data = f["x0"]
             U_data = f["U"]
             s_data = f["s"]
@@ -74,17 +74,18 @@ def save_toy_dataset(num_samples: int = 1000) -> None:
 
 def load_toy_dataset() -> None:
     """Load the toy dataset from the hdf5 file."""
-    with h5py.File("toy_dataset.h5", "r") as f:
-        x0 = jnp.array(f["x0"][0:1000])
-        U = jnp.array(f["U"][0:1000])
-        s = jnp.array(f["s"][0:1000])
-        sigma = jnp.array(f["sigma"][0:1000])
-        k = jnp.array(f["k"][0:1000])
-    dataset = DiffusionDataset(x0=x0, U=U, s=s, sigma=sigma, k=k)
-    print(dataset.x0.shape)
-    print(type(dataset.x0))
-    new_x = dataset.x0 + 1
-    print(new_x.devices())
+    for i in range(10):
+        with h5py.File("/tmp/toy_dataset.h5", "r") as f:
+            x0 = jnp.array(f["x0"][i : i + 1000])
+            U = jnp.array(f["U"][i : i + 1000])
+            s = jnp.array(f["s"][i : i + 1000])
+            sigma = jnp.array(f["sigma"][i : i + 1000])
+            k = jnp.array(f["k"][i : i + 1000])
+        dataset = DiffusionDataset(x0=x0, U=U, s=s, sigma=sigma, k=k)
+        print(dataset.x0.shape)
+        print(type(dataset.x0))
+        new_x = dataset.x0 + 1
+        print(new_x.devices())
 
 
 if __name__ == "__main__":
