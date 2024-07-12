@@ -167,6 +167,9 @@ def train(
         The trained score network parameters and some training metrics.
     """
     rng = jax.random.PRNGKey(seed)
+    dataset_file = Path(dataset_file)
+
+    print(f"Loading dataset from {dataset_file}...")
 
     with h5py.File(dataset_file, "r") as f:
         # Load the data into an intermediate hdf5 representation. This keeps
@@ -177,8 +180,9 @@ def train(
         perm = jax.random.permutation(shuffle_rng, num_data_points)
 
         # Split the dataset into training and validation sets
+        print("Creating training and validation sets...")
         num_val = num_data_points // 10
-        num_val = min(num_val, 10 * options.batch_size)  # Cap to avoid OOM
+        num_val = min(num_val, options.batch_size)  # Cap to avoid OOM issues
         num_train = num_data_points - num_val
         num_batches = num_train // options.batch_size
         train_idx = perm[:num_train]
@@ -186,14 +190,17 @@ def train(
 
         # Load the validation data into memory
         # N.B. we must sort the indices to avoid HDF5 chunking issues
+        print(f"Loading {num_val} validation data points...")
         val_data = h5_dataset[np.sort(val_idx)]
 
         # Initialize the training state
+        print("Initializing training state...")
         rng, init_rng = jax.random.split(rng)
         nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
         nu = h5_dataset.U.shape[-2:]
         train_state = create_train_state(network, nx, nu, options, init_rng)
 
+        print("Getting initial validation loss...")
         val_loss, _ = apply_model(train_state, val_data)
         print("Initial val loss:", val_loss)
 

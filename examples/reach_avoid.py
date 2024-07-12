@@ -10,7 +10,7 @@ from matplotlib.animation import FuncAnimation
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
-#from rddp.training import TrainingOptions, train
+from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
@@ -19,7 +19,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 40
+HORIZON = 20
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -184,7 +184,7 @@ def fit_score_model() -> None:
 
     # Train the score network
     st = time.time()
-    params, metrics = train(net, data_dir, training_options)
+    params, metrics = train(net, data_dir + "dataset.h5", training_options)
     print(f"Training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters
