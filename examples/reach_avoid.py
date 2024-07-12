@@ -176,7 +176,7 @@ def fit_score_model() -> None:
 
     # Set up the training options and the score network
     training_options = TrainingOptions(
-        batch_size=2500,
+        batch_size=5120,
         num_superbatches=1,
         epochs=50,
         learning_rate=1e-3,
