@@ -115,10 +115,9 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
 def train_epoch(
     train_state: TrainState,
     h5_dataset: HDF5DiffusionDataset,
-    batch_size: int,
-    num_superbatches: int,
+    options: TrainingOptions, 
     rng: jax.random.PRNGKey,
-) -> Tuple[TrainState, float]:
+) -> Tuple[TrainState, dict]:
     """Perform an epoch of training on the given dataset.
 
     Since loading a batch from disc is slow, but we can't fit the entire dataset
@@ -127,36 +126,44 @@ def train_epoch(
 
     Args:
         train_state: The training state holding the parameters
-        dataset: The training dataset.
-        batch_size: The batch size.
-        num_superbatches: The number superbatches to split the dataset into.
+        h5_dataset: The training dataset, loaded into CPU memory.
+        options: The training options, like batch and superbatch sizes.
         rng: The random number generator.
 
     Returns:
-        The updated training state and the average training loss.
+        The updated training state and some training metrics
     """
-    num_data_points = len(dataset.x0)
-    steps_per_epoch = num_data_points // batch_size
 
-    # Shuffle the dataset
-    perms = jax.random.permutation(rng, num_data_points)
-    perms = perms[: steps_per_epoch * batch_size]  # Truncate to full batches
-    perms = perms.reshape((steps_per_epoch, batch_size))
+    # Shuffle the dataset and split into superbatches
+    num_data_points = len(h5_dataset)
+    perm = jax.random.permutation(rng, num_data_points)
+    perm = perm.reshape((options.num_superbatches, -1))
+    superbatch_size = perm.shape[1]
+    num_batches = superbatch_size // options.batch_size
 
-    def apply_batch(train_state: TrainState, i: int):
-        """Train the model on a single batch of data."""
-        perm = perms[i]
-        batch = jax.tree.map(lambda x: x[perm, ...], dataset)
-        loss, grad = apply_model(train_state, batch)
-        train_state = update_model(train_state, grad)
-        return train_state, loss
+    metrics = {"load_times": [], "train_times": [], "losses": []}
+    for superbatch in perm:
+        # Load data into GPU memory
+        pre_load_time = time.time()
+        dataset = h5_dataset[superbatch]
+        metrics["load_times"].append(time.time() - pre_load_time)
 
-    # Update the model on each batch
-    train_state, losses = jax.lax.scan(
-        apply_batch, train_state, jnp.arange(steps_per_epoch)
-    )
+        # Train on the superbatch
+        def scan_fn(train_state: TrainState, batch: int):
+            batch_data = jax.tree.map(lambda x: jax.lax.dynamic_slice_in_dim(
+                x, batch * options.batch_size, options.batch_size), dataset)
 
-    return train_state, jnp.mean(losses)
+            loss, grad = apply_model(train_state, batch_data)
+            train_state = update_model(train_state, grad)
+            return train_state, loss
+
+        pre_train_time = time.time()
+        train_state, losses = jax.lax.scan(scan_fn, train_state, jnp.arange(num_batches))
+
+        metrics["train_times"].append(time.time() - pre_train_time)
+        metrics["losses"].append(jnp.mean(losses))
+
+    return train_state, metrics
 
 
 def train(
@@ -215,27 +222,16 @@ def train(
 
     metrics = {"train_loss": [], "val_loss": []}
     for epoch in range(options.epochs):
-        # Shuffle the training dataset and split into superbatches
         rng, epoch_rng = jax.random.split(rng)
-        perm = jax.random.permutation(epoch_rng, num_data_points)
-        perm = perm.reshape((options.num_superbatches, superbatch_size))
+        train_state, train_metrics = train_epoch(
+            train_state, h5_dataset, options, epoch_rng
+        )
 
-        for superbatch in perm:
-            # Load the superbatch into GPU memory
-            pre_load_time = time.time()
-            data = h5_dataset[superbatch]
-            load_time = time.time() - pre_load_time
-
-            # Train on the superbatch
-            pre_train_time = time.time()
-            for batch in range(num_batches):
-                batch_idxs = slice(batch * options.batch_size, 
-                                   (batch + 1) * options.batch_size)
-                batch_data = jax.tree.map(lambda x: x[batch_idxs, ...], data)
-
-                loss, grad = apply_model(train_state, batch_data)
-                train_state = update_model(train_state, grad)
-            train_time = time.time() - pre_train_time
+        # Print some training statistics
+        loss = jnp.mean(jnp.array(train_metrics["losses"]))
+        load_time = jnp.sum(jnp.array(train_metrics["load_times"]))
+        train_time = jnp.sum(jnp.array(train_metrics["train_times"]))
+        metrics["train_loss"].append(loss)
 
         print(f"Epoch {epoch + 1} / {options.epochs}, "
               f"train loss: {loss:.4f}, "
