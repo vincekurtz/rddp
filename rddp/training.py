@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any, Tuple, Union
+import time
 
 import h5py
 import jax
@@ -169,8 +170,6 @@ def train(
     rng = jax.random.PRNGKey(seed)
     dataset_file = Path(dataset_file)
 
-    print(f"Loading dataset from {dataset_file}...")
-
     with h5py.File(dataset_file, "r") as f:
         # Load the data into an intermediate hdf5 representation. This keeps
         # everything on disc, but allows us to read into GPU memory in chunks.
@@ -190,19 +189,15 @@ def train(
 
         # Load the validation data into memory
         # N.B. we must sort the indices to avoid HDF5 chunking issues
-        print(f"Loading {num_val} validation data points...")
         val_data = h5_dataset[np.sort(val_idx)]
 
         # Initialize the training state
-        print("Initializing training state...")
         rng, init_rng = jax.random.split(rng)
         nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
         nu = h5_dataset.U.shape[-2:]
         train_state = create_train_state(network, nx, nu, options, init_rng)
 
-        print("Getting initial validation loss...")
         val_loss, _ = apply_model(train_state, val_data)
-        print("Initial val loss:", val_loss)
 
         metrics = {"train_loss": [], "val_loss": []}
         for epoch in range(options.epochs):
@@ -214,9 +209,13 @@ def train(
 
             # Train the model on each batch
             for batch in batch_perms:
+                st = time.time()
                 batch_data = h5_dataset[np.sort(train_idx[batch])]
+                load_time = time.time() - st
                 loss, grad = apply_model(train_state, batch_data)
                 train_state = update_model(train_state, grad)
+                train_time = time.time() - st - load_time
+
 
             # Print some metrics
             val_loss, _ = apply_model(train_state, val_data)
@@ -225,7 +224,9 @@ def train(
             print(
                 f"Epoch {epoch + 1}: "
                 f"train loss {loss:.4f}, "
-                f"val loss {val_loss:.4f}"
+                f"val loss {val_loss:.4f}, "
+                f"load time {load_time:.4f}s, "
+                f"train time {train_time:.4f}s"
             )
 
     return train_state.params, metrics

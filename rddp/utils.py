@@ -3,6 +3,7 @@ from typing import Callable, Tuple
 import h5py
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax.struct import dataclass
 
 
@@ -207,11 +208,11 @@ class HDF5DiffusionDataset:
             file: The HDF5 file. Must remain open for the lifetime of
                   this object.
         """
-        self.x0 = file["x0"]
-        self.U = file["U"]
-        self.s = file["s"]
-        self.sigma = file["sigma"]
-        self.k = file["k"]
+        self.x0 = np.array(file["x0"])
+        self.U = np.array(file["U"])
+        self.s = np.array(file["s"])
+        self.sigma = np.array(file["sigma"])
+        self.k = np.array(file["k"])
 
         # Size checks
         self.num_data_points = self.x0.shape[0]

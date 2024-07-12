@@ -47,7 +47,7 @@ def test_training() -> None:
     )
     gen_options = DatasetGenerationOptions(
         temperature=0.001,
-        num_initial_states=16,
+        num_initial_states=256,
         num_rollouts_per_data_point=8,
         save_every=100,
         save_path=local_dir,
@@ -59,7 +59,7 @@ def test_training() -> None:
 
     # Train a score network
     options = TrainingOptions(
-        batch_size=128,
+        batch_size=1024,
         epochs=4,
         learning_rate=1e-3,
     )
