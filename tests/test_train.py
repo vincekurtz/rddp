@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import h5py
 import jax
 import jax.numpy as jnp
 
@@ -7,7 +8,7 @@ from rddp.architectures import DiffusionPolicyMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
-from rddp.utils import AnnealedLangevinOptions
+from rddp.utils import AnnealedLangevinOptions, HDF5DiffusionDataset
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -65,17 +66,20 @@ def test_training() -> None:
     net = DiffusionPolicyMLP(layer_sizes=(32,) * 3)
 
     params, metrics = train(net, local_dir / "dataset.h5", options)
-    # assert metrics["train_loss"][-1] < metrics["train_loss"][0]
-    # assert metrics["val_loss"][-1] < metrics["val_loss"][0]
+    assert metrics["train_loss"][-1] < metrics["train_loss"][0]
+    assert metrics["val_loss"][-1] < metrics["val_loss"][0]
 
-    # test_idx = 129
-    # score_estimate = net.apply(
-    #    params,
-    #    dataset.x0[test_idx],
-    #    dataset.U[test_idx],
-    #    dataset.sigma[test_idx],
-    # )
-    # assert score_estimate.shape == dataset.s[test_idx].shape
+    test_idx = 129
+    with h5py.File(local_dir / "dataset.h5", "r") as f:
+        h5_dataset = HDF5DiffusionDataset(f)
+        dataset = h5_dataset[...]
+    score_estimate = net.apply(
+        params,
+        dataset.x0[test_idx],
+        dataset.U[test_idx],
+        dataset.sigma[test_idx],
+    )
+    assert score_estimate.shape == dataset.s[test_idx].shape
 
     # Remove the temporary directory
     for p in local_dir.iterdir():

@@ -1,14 +1,16 @@
 from pathlib import Path
 from typing import Any, Tuple, Union
 
+import h5py
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from flax import linen as nn
 from flax.struct import dataclass
 from flax.training.train_state import TrainState
 
-from rddp.data_loading import TorchDiffusionDataLoader, TorchDiffusionDataset
+from rddp.utils import DiffusionDataset, HDF5DiffusionDataset
 
 Params = Any
 
@@ -63,7 +65,9 @@ def create_train_state(
 
 
 @jax.jit
-def apply_model(state: TrainState, batch: dict) -> Tuple[jnp.ndarray, Params]:
+def apply_model(
+    state: TrainState, batch: DiffusionDataset
+) -> Tuple[jnp.ndarray, Params]:
     """Compute the loss and gradients for a batch of data points.
 
     Args:
@@ -76,13 +80,13 @@ def apply_model(state: TrainState, batch: dict) -> Tuple[jnp.ndarray, Params]:
 
     def loss_fn(params: Params) -> jnp.ndarray:
         """Compute the loss for a batch of data points."""
-        s = state.apply_fn(params, batch["x0"], batch["U"], batch["sigma"])
-        err = jnp.square(s - batch["s"])
+        s = state.apply_fn(params, batch.x0, batch.U, batch.sigma)
+        err = jnp.square(s - batch.s)
 
         # Weigh the error by the noise level, as recommended by Song et al.
         # Generative Modeling by Estimating Gradients of the Data Distribution,
         # NeurIPS 2019.
-        err = jnp.einsum("ij,i...->i...", batch["sigma"] ** 2, err)
+        err = jnp.einsum("ij,i...->i...", batch.sigma**2, err)
 
         return jnp.mean(err)
 
@@ -104,9 +108,50 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
     return state.apply_gradients(grads=grad)
 
 
+def train_epoch(
+    train_state: TrainState,
+    dataset: DiffusionDataset,
+    batch_size: int,
+    rng: jax.random.PRNGKey,
+) -> Tuple[TrainState, float]:
+    """Perform an epoch of training on the given dataset.
+
+    Args:
+        train_state: The training state holding the parameters
+        dataset: The training dataset.
+        batch_size: The batch size.
+        rng: The random number generator.
+
+    Returns:
+        The updated training state and the average training loss.
+    """
+    num_data_points = len(dataset.x0)
+    steps_per_epoch = num_data_points // batch_size
+
+    # Shuffle the dataset
+    perms = jax.random.permutation(rng, num_data_points)
+    perms = perms[: steps_per_epoch * batch_size]  # Truncate to full batches
+    perms = perms.reshape((steps_per_epoch, batch_size))
+
+    def apply_batch(train_state: TrainState, i: int):
+        """Train the model on a single batch of data."""
+        perm = perms[i]
+        batch = jax.tree.map(lambda x: x[perm, ...], dataset)
+        loss, grad = apply_model(train_state, batch)
+        train_state = update_model(train_state, grad)
+        return train_state, loss
+
+    # Update the model on each batch
+    train_state, losses = jax.lax.scan(
+        apply_batch, train_state, jnp.arange(steps_per_epoch)
+    )
+
+    return train_state, jnp.mean(losses)
+
+
 def train(
     network: nn.Module,  # TODO: make a custom score network type
-    data_path: Union[str, Path],
+    dataset_file: Union[str, Path],
     options: TrainingOptions,
     seed: int = 0,
 ) -> Tuple[Params, dict]:
@@ -114,7 +159,7 @@ def train(
 
     Args:
         network: The score network to train.
-        data_path: The path to the saved training dataset
+        dataset_file: Path to the hdf5 file containing the dataset.
         options: The training options.
         seed: The random seed.
 
@@ -122,33 +167,58 @@ def train(
         The trained score network parameters and some training metrics.
     """
     rng = jax.random.PRNGKey(seed)
-    data_path = Path(data_path)
 
-    # Create a torch dataset and data loader
-    dataset = TorchDiffusionDataset(data_path)
-    data_loader = TorchDiffusionDataLoader(
-        dataset, batch_size=options.batch_size, shuffle=True, num_workers=0
-    )
+    with h5py.File(dataset_file, "r") as f:
+        # Load the data into an intermediate hdf5 representation. This keeps
+        # everything on disc, but allows us to read into GPU memory in chunks.
+        h5_dataset = HDF5DiffusionDataset(f)
+        num_data_points = len(h5_dataset)
+        rng, shuffle_rng = jax.random.split(rng)
+        perm = jax.random.permutation(shuffle_rng, num_data_points)
 
-    # Initialize the training state
-    rng, init_rng = jax.random.split(rng)
-    nx = dataset[0]["x0"].shape[-1:]  # TODO: support more generic shapes
-    nu = dataset[0]["U"].shape[-2:]
-    train_state = create_train_state(network, nx, nu, options, init_rng)
+        # Split the dataset into training and validation sets
+        num_val = num_data_points // 10
+        num_val = min(num_val, 10 * options.batch_size)  # Cap to avoid OOM
+        num_train = num_data_points - num_val
+        num_batches = num_train // options.batch_size
+        train_idx = perm[:num_train]
+        val_idx = perm[num_train:]
 
-    # Train the model
-    metrics = {"train_loss": [], "val_loss": []}
-    print("Starting training, dataset has length", len(dataset))
-    for epoch in range(options.epochs):
-        for batch in data_loader:
-            print("got batch")
-            loss, grad = apply_model(train_state, batch)
-            train_state = update_model(train_state, grad)
-            print("batch loss", loss)
+        # Load the validation data into memory
+        # N.B. we must sort the indices to avoid HDF5 chunking issues
+        val_data = h5_dataset[np.sort(val_idx)]
 
-        # TODO: compute some sort of validation loss
+        # Initialize the training state
+        rng, init_rng = jax.random.split(rng)
+        nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
+        nu = h5_dataset.U.shape[-2:]
+        train_state = create_train_state(network, nx, nu, options, init_rng)
 
-        print(f"Epoch {epoch}, loss {loss:.4f}")
-        metrics["train_loss"].append(loss)
+        val_loss, _ = apply_model(train_state, val_data)
+        print("Initial val loss:", val_loss)
+
+        metrics = {"train_loss": [], "val_loss": []}
+        for epoch in range(options.epochs):
+            # Shuffle the training dataset
+            rng, epoch_rng = jax.random.split(rng)
+            batch_perms = jax.random.permutation(epoch_rng, num_train)
+            batch_perms = batch_perms[: num_batches * options.batch_size]
+            batch_perms = batch_perms.reshape((num_batches, options.batch_size))
+
+            # Train the model on each batch
+            for batch in batch_perms:
+                batch_data = h5_dataset[np.sort(train_idx[batch])]
+                loss, grad = apply_model(train_state, batch_data)
+                train_state = update_model(train_state, grad)
+
+            # Print some metrics
+            val_loss, _ = apply_model(train_state, val_data)
+            metrics["train_loss"].append(loss)
+            metrics["val_loss"].append(val_loss)
+            print(
+                f"Epoch {epoch + 1}: "
+                f"train loss {loss:.4f}, "
+                f"val loss {val_loss:.4f}"
+            )
 
     return train_state.params, metrics

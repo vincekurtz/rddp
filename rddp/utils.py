@@ -233,6 +233,9 @@ class HDF5DiffusionDataset:
 
             my_jax_batch = my_hdf5_dataset[10:20]
 
+        However, note that h5py slicing requires that indices are sorted.
+        See https://docs.h5py.org/en/latest/high/dataset.html#fancy-indexing
+
         Args:
             idx: The index of the data point to extract.
 
