@@ -1,5 +1,6 @@
 from typing import Callable, Tuple
 
+import h5py
 import jax
 import jax.numpy as jnp
 from flax.struct import dataclass
@@ -189,3 +190,59 @@ def sample_dataset(
         k=dataset.k[idxs],
         sigma=dataset.sigma[idxs],
     )
+
+
+class HDF5DiffusionDataset:
+    """A wrapper around an HDF5 file containing a diffusion dataset.
+
+    Provides a simple interface reading data that is stored on disc in an HDF5
+    file. This is essential for working with large datasets that do not fit
+    into memory.
+    """
+
+    def __init__(self, file: h5py.File):
+        """Initialize the dataset wrapper.
+
+        Args:
+            file: The HDF5 file. Must remain open for the lifetime of
+                  this object.
+        """
+        self.x0 = file["x0"]
+        self.U = file["U"]
+        self.s = file["s"]
+        self.sigma = file["sigma"]
+        self.k = file["k"]
+
+        # Size checks
+        self.num_data_points = self.x0.shape[0]
+        assert self.U.shape[0] == self.num_data_points
+        assert self.s.shape[0] == self.num_data_points
+        assert self.sigma.shape[0] == self.num_data_points
+        assert self.k.shape[0] == self.num_data_points
+        assert self.U.shape == self.s.shape
+        assert self.sigma.shape == self.k.shape
+
+    def __len__(self) -> int:
+        """Return the number of data points in the dataset."""
+        return self.num_data_points
+
+    def __getitem__(self, idx: int) -> DiffusionDataset:
+        """Load the data at the given indices into GPU memory.
+
+        This allows us to access the data with slicing syntax, e.g.,
+
+            my_jax_batch = my_hdf5_dataset[10:20]
+
+        Args:
+            idx: The index of the data point to extract.
+
+        Returns:
+            A jax dataset object containing the data at the given indices.
+        """
+        return DiffusionDataset(
+            x0=jnp.array(self.x0[idx]),
+            U=jnp.array(self.U[idx]),
+            s=jnp.array(self.s[idx]),
+            k=jnp.array(self.k[idx]),
+            sigma=jnp.array(self.sigma[idx]),
+        )

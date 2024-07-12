@@ -7,7 +7,11 @@ import jax.numpy as jnp
 
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
-from rddp.utils import AnnealedLangevinOptions, DiffusionDataset
+from rddp.utils import (
+    AnnealedLangevinOptions,
+    DiffusionDataset,
+    HDF5DiffusionDataset,
+)
 
 
 def test_score_estimate() -> None:
@@ -104,12 +108,21 @@ def test_save_dataset() -> None:
 
     # Check that the hdf5 file was updated
     with h5py.File(local_dir / "dataset.h5", "r") as f:
-        x0, U, s, sigma, k = f["x0"], f["U"], f["s"], f["sigma"], f["k"]
-        assert x0.shape == (num_samples, 2)
-        assert U.shape == (num_samples, 19, 2)
-        assert s.shape == (num_samples, 19, 2)
-        assert sigma.shape == (num_samples, 1)
-        assert k.shape == (num_samples, 1)
+        h5_dataset = HDF5DiffusionDataset(f)
+        assert len(h5_dataset) == num_samples
+        assert h5_dataset.x0.shape == (num_samples, 2)
+        assert h5_dataset.U.shape == (num_samples, 19, 2)
+        assert h5_dataset.s.shape == (num_samples, 19, 2)
+        assert h5_dataset.sigma.shape == (num_samples, 1)
+        assert h5_dataset.k.shape == (num_samples, 1)
+
+        # Check that slicing on the hdf5 dataset works
+        partial_dataset = h5_dataset[2:14]
+        assert jnp.all(partial_dataset.x0 == x0[2:14])
+        assert jnp.all(partial_dataset.U == U[2:14])
+        assert jnp.all(partial_dataset.s == s[2:14])
+        assert jnp.all(partial_dataset.sigma == sigma[2:14])
+        assert jnp.all(partial_dataset.k == k[2:14])
 
     # Remove the temporary directory
     for p in local_dir.iterdir():
@@ -152,12 +165,8 @@ def test_generate() -> None:
         * gen_options.num_initial_states
     )
     with h5py.File(local_dir / "dataset.h5", "r") as f:
-        x0, U, s, sigma, k = f["x0"], f["U"], f["s"], f["sigma"], f["k"]
-        assert x0.shape[0] == N
-        assert U.shape[0] == N
-        assert s.shape[0] == N
-        assert sigma.shape[0] == N
-        assert k.shape[0] == N
+        h5_dataset = HDF5DiffusionDataset(f)
+        assert len(h5_dataset) == N
 
     # Remove the temporary directory
     for p in local_dir.iterdir():
