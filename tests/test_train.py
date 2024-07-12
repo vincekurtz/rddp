@@ -59,7 +59,8 @@ def test_training() -> None:
 
     # Train a score network
     options = TrainingOptions(
-        batch_size=1024,
+        batch_size=512,
+        num_superbatches=4,
         epochs=4,
         learning_rate=1e-3,
     )

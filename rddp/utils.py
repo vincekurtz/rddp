@@ -204,10 +204,15 @@ class HDF5DiffusionDataset:
     def __init__(self, file: h5py.File):
         """Initialize the dataset wrapper.
 
+        Note that this loads the entire dataset into CPU memory.
+
         Args:
-            file: The HDF5 file. Must remain open for the lifetime of
-                  this object.
+            file: The HDF5 file. Must be open in read mode on construction.
         """
+        # Load the data from the HDF5 file into CPU memory. For some reason 
+        # conversion to jnp arrays is super slow when done directly from the
+        # HDF5 file, so we load everything into CPU memory first and only move
+        # to GPU when the data is accessed with __getitem__.
         self.x0 = np.array(file["x0"])
         self.U = np.array(file["U"])
         self.s = np.array(file["s"])
@@ -233,9 +238,6 @@ class HDF5DiffusionDataset:
         This allows us to access the data with slicing syntax, e.g.,
 
             my_jax_batch = my_hdf5_dataset[10:20]
-
-        However, note that h5py slicing requires that indices are sorted.
-        See https://docs.h5py.org/en/latest/high/dataset.html#fancy-indexing
 
         Args:
             idx: The index of the data point to extract.

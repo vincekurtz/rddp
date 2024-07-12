@@ -25,11 +25,14 @@ class TrainingOptions:
 
     Attributes:
         batch_size: The batch size for training.
+        num_superbatches: The number of chunks to split the dataset into. Each
+            superbatch is a collection of batches that are loaded into memory.
         epochs: The number of training epochs.
         learning_rate: The learning rate for training.
     """
 
     batch_size: int
+    num_superbatches: int
     epochs: int
     learning_rate: float
 
@@ -111,16 +114,22 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
 
 def train_epoch(
     train_state: TrainState,
-    dataset: DiffusionDataset,
+    h5_dataset: HDF5DiffusionDataset,
     batch_size: int,
+    num_superbatches: int,
     rng: jax.random.PRNGKey,
 ) -> Tuple[TrainState, float]:
     """Perform an epoch of training on the given dataset.
+
+    Since loading a batch from disc is slow, but we can't fit the entire dataset
+    into GPU memory, we load several "superbatches" at once. This allows
+    us to train on the GPU without waiting too long for data to load.
 
     Args:
         train_state: The training state holding the parameters
         dataset: The training dataset.
         batch_size: The batch size.
+        num_superbatches: The number superbatches to split the dataset into.
         rng: The random number generator.
 
     Returns:
@@ -170,63 +179,67 @@ def train(
     rng = jax.random.PRNGKey(seed)
     dataset_file = Path(dataset_file)
 
+    # Load the dataset from disc to CPU memory
     with h5py.File(dataset_file, "r") as f:
-        # Load the data into an intermediate hdf5 representation. This keeps
-        # everything on disc, but allows us to read into GPU memory in chunks.
         h5_dataset = HDF5DiffusionDataset(f)
-        num_data_points = len(h5_dataset)
-        rng, shuffle_rng = jax.random.split(rng)
-        perm = jax.random.permutation(shuffle_rng, num_data_points)
 
-        # Split the dataset into training and validation sets
-        print("Creating training and validation sets...")
-        num_val = num_data_points // 10
-        num_val = min(num_val, options.batch_size)  # Cap to avoid OOM issues
-        num_train = num_data_points - num_val
-        num_batches = num_train // options.batch_size
-        train_idx = perm[:num_train]
-        val_idx = perm[num_train:]
+    # Compute some useful quantities and check sizes
+    num_data_points = len(h5_dataset)
+    assert num_data_points % options.num_superbatches == 0, (
+        f"data points {num_data_points} not divisible by "
+        f"number of superbatches {options.num_superbatches}."
+    )
+    superbatch_size = num_data_points // options.num_superbatches
+    assert superbatch_size >= options.batch_size, (
+        f"superbatch size {superbatch_size} is smaller than "
+        f"batch size {options.batch_size}."
+    )
+    assert superbatch_size % options.batch_size == 0, (
+        f"superbatch size {superbatch_size} not divisible by "
+        f"batch size {options.batch_size}."
+    )
+    num_batches = superbatch_size // options.batch_size
 
-        # Load the validation data into memory
-        # N.B. we must sort the indices to avoid HDF5 chunking issues
-        val_data = h5_dataset[np.sort(val_idx)]
+    print("Training with: ")
+    print(f"  {num_data_points} data points")
+    print(f"  {options.batch_size} batch size")
+    print(f"  {num_batches * options.num_superbatches} batches per epoch")
+    print(f"  {options.num_superbatches} superbatches per epoch")
+    print(f"  {options.epochs} epochs")
 
-        # Initialize the training state
-        rng, init_rng = jax.random.split(rng)
-        nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
-        nu = h5_dataset.U.shape[-2:]
-        train_state = create_train_state(network, nx, nu, options, init_rng)
+    # Initialize the training state
+    rng, init_rng = jax.random.split(rng)
+    nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
+    nu = h5_dataset.U.shape[-2:]
+    train_state = create_train_state(network, nx, nu, options, init_rng)
 
-        val_loss, _ = apply_model(train_state, val_data)
+    metrics = {"train_loss": [], "val_loss": []}
+    for epoch in range(options.epochs):
+        # Shuffle the training dataset and split into superbatches
+        rng, epoch_rng = jax.random.split(rng)
+        perm = jax.random.permutation(epoch_rng, num_data_points)
+        perm = perm.reshape((options.num_superbatches, superbatch_size))
 
-        metrics = {"train_loss": [], "val_loss": []}
-        for epoch in range(options.epochs):
-            # Shuffle the training dataset
-            rng, epoch_rng = jax.random.split(rng)
-            batch_perms = jax.random.permutation(epoch_rng, num_train)
-            batch_perms = batch_perms[: num_batches * options.batch_size]
-            batch_perms = batch_perms.reshape((num_batches, options.batch_size))
+        for superbatch in perm:
+            # Load the superbatch into GPU memory
+            pre_load_time = time.time()
+            data = h5_dataset[superbatch]
+            load_time = time.time() - pre_load_time
 
-            # Train the model on each batch
-            for batch in batch_perms:
-                st = time.time()
-                batch_data = h5_dataset[np.sort(train_idx[batch])]
-                load_time = time.time() - st
+            # Train on the superbatch
+            pre_train_time = time.time()
+            for batch in range(num_batches):
+                batch_idxs = slice(batch * options.batch_size, 
+                                   (batch + 1) * options.batch_size)
+                batch_data = jax.tree.map(lambda x: x[batch_idxs, ...], data)
+
                 loss, grad = apply_model(train_state, batch_data)
                 train_state = update_model(train_state, grad)
-                train_time = time.time() - st - load_time
+            train_time = time.time() - pre_train_time
 
-
-            # Print some metrics
-            val_loss, _ = apply_model(train_state, val_data)
-            metrics["train_loss"].append(loss)
-            metrics["val_loss"].append(val_loss)
-            print(
-                f"Epoch {epoch + 1}: "
-                f"train loss {loss:.4f}, "
-                f"val loss {val_loss:.4f}, "
-                f"load time {load_time:.4f}s, "
-                f"train time {train_time:.4f}s"
-            )
+        print(f"Epoch {epoch + 1} / {options.epochs}, "
+              f"train loss: {loss:.4f}, "
+              f"load time: {load_time:.2f}s, "
+              f"train time: {train_time:.2f}s")
 
     return train_state.params, metrics
