@@ -1,6 +1,9 @@
+import time
+
 import h5py
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from rddp.utils import DiffusionDataset
 
@@ -72,8 +75,8 @@ def save_toy_dataset(num_samples: int = 1000) -> None:
             k_data[num_existing_data_points:] = dataset.k
 
 
-def load_toy_dataset() -> None:
-    """Load the toy dataset from the hdf5 file."""
+def load_partial_dataset() -> None:
+    """Load part of the toy dataset into GPU memory."""
     for i in range(10):
         with h5py.File("/tmp/toy_dataset.h5", "r") as f:
             x0 = jnp.array(f["x0"][i : i + 1000])
@@ -88,6 +91,141 @@ def load_toy_dataset() -> None:
         print(new_x.devices())
 
 
+@jax.jit
+def do_toy_computation_on_batch(dataset: DiffusionDataset) -> jnp.ndarray:
+    """Do some toy computation on a batch of data, to imitate training."""
+    res = dataset.U + dataset.s
+    res = jnp.sum(res, axis=(1, 2))
+    res = res * dataset.x0[:, 0] + dataset.x0[:, 1]
+    return res.mean()
+
+
+def gpu_only(batch_size=2048) -> None:
+    """Do the toy computation on the full dataset, loading it all to GPU."""
+    rng = jax.random.PRNGKey(0)
+
+    st = time.time()
+    with h5py.File("/tmp/toy_dataset.h5", "r") as f:
+        num_data_points = f["x0"].shape[0]
+        x0 = jnp.array(f["x0"])
+        U = jnp.array(f["U"])
+        s = jnp.array(f["s"])
+        sigma = jnp.array(f["sigma"])
+        k = jnp.array(f["k"])
+    dataset = DiffusionDataset(x0=x0, U=U, s=s, sigma=sigma, k=k)
+    print(f"Loaded {num_data_points} samples in {time.time() - st:.2f} seconds")
+
+    num_batches = num_data_points // batch_size
+    rng, shuffle_rng = jax.random.split(rng)
+    perm = jax.random.permutation(shuffle_rng, num_data_points)
+
+    def scan_fn(carry, batch):
+        # idx = perm[batch * batch_size : (batch + 1) * batch_size]
+        idx = jax.lax.dynamic_slice_in_dim(perm, batch * batch_size, batch_size)
+        batch_dataset = jax.tree.map(lambda x: x[idx], dataset)
+        res = do_toy_computation_on_batch(batch_dataset)
+        return carry + res, res
+
+    total_start_time = time.time()
+    res, _ = jax.lax.scan(scan_fn, 0.0, jnp.arange(num_batches))
+
+    # for batch in range(num_batches):
+    #    print(f"Batch {batch + 1}/{num_batches}")
+    #    st = time.time()
+    #    idx = perm[batch * batch_size : (batch + 1) * batch_size]
+    #    batch_dataset = jax.tree.map(lambda x: x[idx], dataset)
+    #    print(f"  Loaded in {time.time() - st:.5f} seconds")
+    #    assert batch_dataset.x0.shape == (batch_size, 2)
+
+    #    st = time.time()
+    #    res = do_toy_computation_on_batch(batch_dataset)
+    #    print(f"  Computation took {time.time() - st:.5f} seconds")
+
+    print(f"Epoch time: {time.time() - total_start_time:.2f} seconds")
+    print(res)
+
+
+def disc_to_gpu(batch_size=2048) -> None:
+    """Do the toy computation on the full dataset, loading each batch to GPU."""
+    rng = jax.random.PRNGKey(0)
+    with h5py.File("/tmp/toy_dataset.h5", "r") as f:
+        num_data_points = f["x0"].shape[0]
+        x0, U, s, sigma, k = f["x0"], f["U"], f["s"], f["sigma"], f["k"]
+
+        num_batches = num_data_points // batch_size
+        rng, shuffle_rng = jax.random.split(rng)
+        perm = jax.random.permutation(shuffle_rng, num_data_points)
+
+        for batch in range(num_batches):
+            print(f"Batch {batch + 1}/{num_batches}")
+            st = time.time()
+            idx = jnp.sort(perm[batch * batch_size : (batch + 1) * batch_size])
+            x0_batch = jnp.array(x0[idx])
+            U_batch = jnp.array(U[idx])
+            s_batch = jnp.array(s[idx])
+            sigma_batch = jnp.array(sigma[idx])
+            k_batch = jnp.array(k[idx])
+            dataset = DiffusionDataset(
+                x0=x0_batch, U=U_batch, s=s_batch, sigma=sigma_batch, k=k_batch
+            )
+            print(f"  Loaded in {time.time() - st:.2f} seconds")
+            assert dataset.x0.shape == (batch_size, 2)
+
+            st = time.time()
+            res = do_toy_computation_on_batch(dataset)
+            print(f"  Computation took {time.time() - st:.2f} seconds")
+
+
+def disc_to_ram_to_gpu(batch_size=2048) -> None:
+    """Do the toy computation on the full dataset, loading to RAM first."""
+    rng = jax.random.PRNGKey(0)
+
+    # Load the dataset to RAM
+    st = time.time()
+    with h5py.File("/tmp/toy_dataset.h5", "r") as f:
+        x0, U, s, sigma, k = f["x0"], f["U"], f["s"], f["sigma"], f["k"]
+        x0 = np.array(x0)
+        U = np.array(U)
+        s = np.array(s)
+        sigma = np.array(sigma)
+        k = np.array(k)
+    print(f"Loaded to RAM in {time.time() - st:.2f} seconds")
+
+    num_data_points = x0.shape[0]
+    num_batches = num_data_points // batch_size
+    rng, shuffle_rng = jax.random.split(rng)
+    perm = jax.random.permutation(shuffle_rng, num_data_points)
+
+    # Do the actual computation, shifting batches to GPU as needed
+    total_start_time = time.time()
+    total = 0.0
+    for batch in range(num_batches):
+        print(f"Batch {batch + 1}/{num_batches}")
+        st = time.time()
+        idx = perm[batch * batch_size : (batch + 1) * batch_size]
+        x0_batch = jnp.array(x0[idx])
+        U_batch = jnp.array(U[idx])
+        s_batch = jnp.array(s[idx])
+        sigma_batch = jnp.array(sigma[idx])
+        k_batch = jnp.array(k[idx])
+        dataset = DiffusionDataset(
+            x0=x0_batch, U=U_batch, s=s_batch, sigma=sigma_batch, k=k_batch
+        )
+        print(f"  Loaded in {time.time() - st:.5f} seconds")
+        assert dataset.x0.shape == (batch_size, 2)
+
+        st = time.time()
+        res = do_toy_computation_on_batch(dataset)
+        print(f"  Computation took {time.time() - st:.5f} seconds")
+        total += res
+
+    print(f"Epoch time: {time.time() - total_start_time:.2f} seconds")
+    print(total)
+
+
 if __name__ == "__main__":
-    # save_toy_dataset(10_000)
-    load_toy_dataset()
+    # save_toy_dataset(7_000)
+    # load_full_dataset()
+    # gpu_only()
+    # disc_to_gpu()
+    disc_to_ram_to_gpu()
