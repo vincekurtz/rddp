@@ -2,6 +2,7 @@ import pickle
 import sys
 import time
 
+import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -14,12 +15,13 @@ from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
+    HDF5DiffusionDataset,
     annealed_langevin_sample,
     sample_dataset,
 )
 
 # Global planning horizon definition
-HORIZON = 10
+HORIZON = 20
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -141,6 +143,7 @@ def generate_dataset(plot: bool = False) -> None:
         starting_noise_level=0.5,
         num_steps=100,
         step_size=0.01,
+        noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         temperature=0.001,
@@ -158,10 +161,17 @@ def generate_dataset(plot: bool = False) -> None:
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested
-    # TODO: plot the full dataset using the torch dataloader
     if plot:
-        with open(save_path + "diffusion_data_1.pkl", "rb") as f:
-            dataset = pickle.load(f)
+        # Select every Nth data point for visualization. This avoids loading
+        # the full dataset into memory.
+        N = 10
+        st = time.time()
+        with h5py.File(save_path + "dataset.h5", "r") as f:
+            h5_dataset = HDF5DiffusionDataset(f)
+            idxs = jnp.arange(0, len(h5_dataset), N)
+            print("Loading...")
+            dataset = h5_dataset[idxs]
+        print(f"Loaded dataset in {time.time() - st:.2f} seconds")
         visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
 
@@ -177,7 +187,7 @@ def fit_score_model() -> None:
     # Set up the training options and the score network
     training_options = TrainingOptions(
         batch_size=5120,
-        num_superbatches=4,
+        num_superbatches=1,
         epochs=50,
         learning_rate=1e-3,
     )
@@ -299,7 +309,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if sys.argv[1] == "generate":
-        generate_dataset(plot=False)
+        generate_dataset(plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
