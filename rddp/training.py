@@ -1,3 +1,4 @@
+import functools
 import time
 from pathlib import Path
 from typing import Any, Tuple, Union
@@ -109,6 +110,7 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
     return state.apply_gradients(grads=grad)
 
 
+@functools.partial(jax.jit, static_argnums=(2,), donate_argnums=(0,))
 def train_superbatch(
     train_state: TrainState,
     dataset: DiffusionDataset,
@@ -140,7 +142,6 @@ def train_superbatch(
         train_state = update_model(train_state, grad)
         return (train_state, loss), None
 
-    # N.B. this scan forces jit compilation of scan_fn
     (train_state, loss), _ = jax.lax.scan(
         scan_fn, (train_state, 0.0), jnp.arange(num_batches)
     )
@@ -229,6 +230,7 @@ def train(
                 # Load the superbatch into GPU memory. This is the slowest part.
                 idxs = perm[s * superbatch_size : (s + 1) * superbatch_size]
                 superbatch = h5_dataset[idxs]
+            jax.block_until_ready(superbatch)
             load_time += time.time() - st
 
             # Train on the superbatch
@@ -236,6 +238,7 @@ def train(
             train_state, loss = train_superbatch(
                 train_state, superbatch, options
             )
+            jax.block_until_ready(loss)
             train_time += time.time() - st
 
         metrics["loss"].append(loss)
