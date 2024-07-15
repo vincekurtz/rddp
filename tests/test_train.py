@@ -67,8 +67,7 @@ def test_training() -> None:
     net = DiffusionPolicyMLP(layer_sizes=(32,) * 3)
 
     params, metrics = train(net, local_dir / "dataset.h5", options)
-    assert metrics["train_loss"][-1] < metrics["train_loss"][0]
-    assert metrics["val_loss"][-1] < metrics["val_loss"][0]
+    assert metrics["loss"][-1] < metrics["loss"][0]
 
     test_idx = 129
     with h5py.File(local_dir / "dataset.h5", "r") as f:
