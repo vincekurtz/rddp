@@ -207,6 +207,11 @@ def train(
     if options.num_superbatches == 1:
         superbatch = h5_dataset[:]
 
+    # Helper function for shuffling the dataset
+    jit_shuffle = jax.jit(
+        lambda data, perm: jax.tree_map(lambda x: x[perm], data)
+    )
+
     metrics = {"loss": [], "load_time": [], "train_time": []}
     for epoch in range(options.epochs):
         rng, epoch_rng = jax.random.split(rng)
@@ -219,9 +224,7 @@ def train(
             st = time.time()
             if options.num_superbatches == 1:
                 # The superbatch is already loaded, we'll just shuffle it
-                superbatch = jax.tree_map(
-                    lambda x, perm=perm: x[perm], superbatch
-                )
+                superbatch = jit_shuffle(superbatch, perm)
             else:
                 # Load the superbatch into GPU memory. This is the slowest part.
                 idxs = perm[s * superbatch_size : (s + 1) * superbatch_size]
@@ -243,8 +246,8 @@ def train(
         print(
             f"Epoch {epoch + 1} / {options.epochs}, "
             f"loss: {loss:.4f}, "
-            f"load time: {load_time:.2f}s, "
-            f"train time: {train_time:.2f}s"
+            f"load time: {load_time:.4f}s, "
+            f"train time: {train_time:.4f}s"
         )
 
     return train_state.params, metrics

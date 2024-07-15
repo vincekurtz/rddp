@@ -209,15 +209,15 @@ class HDF5DiffusionDataset:
         Args:
             file: The HDF5 file. Must be open in read mode on construction.
         """
-        # Load the data from the HDF5 file into CPU memory. For some reason 
+        # Load the data from the HDF5 file into CPU memory. For some reason
         # conversion to jnp arrays is super slow when done directly from the
         # HDF5 file, so we load everything into CPU memory first and only move
         # to GPU when the data is accessed with __getitem__.
-        self.x0 = np.array(file["x0"])
-        self.U = np.array(file["U"])
-        self.s = np.array(file["s"])
-        self.sigma = np.array(file["sigma"])
-        self.k = np.array(file["k"])
+        self.x0 = np.array(file["x0"], dtype=jnp.float32)
+        self.U = np.array(file["U"], dtype=jnp.float32)
+        self.s = np.array(file["s"], dtype=jnp.float32)
+        self.sigma = np.array(file["sigma"], dtype=jnp.float32)
+        self.k = np.array(file["k"], dtype=jnp.int32)
 
         # Size checks
         self.num_data_points = self.x0.shape[0]
@@ -246,9 +246,9 @@ class HDF5DiffusionDataset:
             A jax dataset object containing the data at the given indices.
         """
         return DiffusionDataset(
-            x0=jnp.array(self.x0[idx]),
-            U=jnp.array(self.U[idx]),
-            s=jnp.array(self.s[idx]),
-            k=jnp.array(self.k[idx]),
-            sigma=jnp.array(self.sigma[idx]),
+            x0=jnp.asarray(self.x0[idx], dtype=jnp.float32),
+            U=jnp.asarray(self.U[idx], dtype=jnp.float32),
+            s=jnp.asarray(self.s[idx], dtype=jnp.float32),
+            sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),
+            k=jnp.asarray(self.k[idx], dtype=jnp.int32),
         )
