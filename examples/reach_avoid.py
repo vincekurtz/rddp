@@ -21,7 +21,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 40
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -139,7 +139,7 @@ def generate_dataset(plot: bool = False) -> None:
     # Problem setup
     prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
+        num_noise_levels=500,
         starting_noise_level=0.5,
         num_steps=100,
         step_size=0.01,
@@ -187,11 +187,11 @@ def fit_score_model() -> None:
     # Set up the training options and the score network
     training_options = TrainingOptions(
         batch_size=5120,
-        num_superbatches=1,
+        num_superbatches=20,
         epochs=50,
         learning_rate=1e-3,
     )
-    net = DiffusionPolicyMLP(layer_sizes=(128,) * 3)
+    net = DiffusionPolicyMLP(layer_sizes=(512,) * 3)
 
     # Train the score network
     st = time.time()
