@@ -107,17 +107,27 @@ def gpu_only(batch_size=2048) -> None:
     st = time.time()
     with h5py.File("/tmp/toy_dataset.h5", "r") as f:
         num_data_points = f["x0"].shape[0]
-        x0 = jnp.array(f["x0"])
-        U = jnp.array(f["U"])
-        s = jnp.array(f["s"])
-        sigma = jnp.array(f["sigma"])
-        k = jnp.array(f["k"])
-    dataset = DiffusionDataset(x0=x0, U=U, s=s, sigma=sigma, k=k)
+        x0 = np.array(f["x0"])
+        U = np.array(f["U"])
+        s = np.array(f["s"])
+        sigma = np.array(f["sigma"])
+        k = np.array(f["k"])
     print(f"Loaded {num_data_points} samples in {time.time() - st:.2f} seconds")
 
     num_batches = num_data_points // batch_size
     rng, shuffle_rng = jax.random.split(rng)
     perm = jax.random.permutation(shuffle_rng, num_data_points)
+    
+
+    st = time.time() 
+    dataset = DiffusionDataset(
+        x0=jnp.array(x0),
+        U=jnp.array(U),
+        s=jnp.array(s),
+        k=jnp.array(k),
+        sigma=jnp.array(sigma),
+    )
+    print("Moved to GPU in", time.time() - st)
 
     def scan_fn(carry, batch):
         # idx = perm[batch * batch_size : (batch + 1) * batch_size]
@@ -126,22 +136,10 @@ def gpu_only(batch_size=2048) -> None:
         res = do_toy_computation_on_batch(batch_dataset)
         return carry + res, res
 
-    total_start_time = time.time()
+    st = time.time()
     res, _ = jax.lax.scan(scan_fn, 0.0, jnp.arange(num_batches))
 
-    # for batch in range(num_batches):
-    #    print(f"Batch {batch + 1}/{num_batches}")
-    #    st = time.time()
-    #    idx = perm[batch * batch_size : (batch + 1) * batch_size]
-    #    batch_dataset = jax.tree.map(lambda x: x[idx], dataset)
-    #    print(f"  Loaded in {time.time() - st:.5f} seconds")
-    #    assert batch_dataset.x0.shape == (batch_size, 2)
-
-    #    st = time.time()
-    #    res = do_toy_computation_on_batch(batch_dataset)
-    #    print(f"  Computation took {time.time() - st:.5f} seconds")
-
-    print(f"Epoch time: {time.time() - total_start_time:.2f} seconds")
+    print(f"Epoch time: {time.time() - st:.4f} seconds")
     print(res)
 
 
@@ -226,6 +224,6 @@ def disc_to_ram_to_gpu(batch_size=2048) -> None:
 if __name__ == "__main__":
     # save_toy_dataset(7_000)
     # load_full_dataset()
-    # gpu_only()
     # disc_to_gpu()
-    disc_to_ram_to_gpu()
+    #disc_to_ram_to_gpu(batch_size=4096)
+    gpu_only(batch_size=4096)

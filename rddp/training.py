@@ -112,6 +112,42 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
     return state.apply_gradients(grads=grad)
 
 
+def train_superbatch(
+    train_state: TrainState,
+    dataset: DiffusionDataset,
+    options: TrainingOptions,
+) -> Tuple[TrainState, dict]:
+    """Train on a superbatch (large portion of the dataset).
+
+    Args:
+        train_state: The training state holding the parameters.
+        dataset: The shuffled superbatch of training data, loaded on the GPU.
+        options: The training options, like batch size etc.
+
+    Returns:
+        The updated training state and some training metrics.
+    """
+    # TODO: make these explicit args?
+    superbatch_size = len(dataset.x0)
+    num_batches = superbatch_size // options.batch_size
+        
+    def scan_fn(train_state: TrainState, batch: int):
+        batch_data = jax.tree.map(lambda x: jax.lax.dynamic_slice_in_dim(
+            x, batch * options.batch_size, options.batch_size), dataset)
+
+        loss, grad = apply_model(train_state, batch_data)
+        train_state = update_model(train_state, grad)
+        return train_state, loss
+
+    metrics = {}
+    pre_train_time = time.time()
+    train_state, loss = jax.lax.scan(scan_fn, train_state, jnp.arange(num_batches))
+    metrics["train_time"] = time.time() - pre_train_time
+    metrics["loss"] = jnp.mean(loss)
+
+    return train_state, metrics
+
+
 def train_epoch(
     train_state: TrainState,
     h5_dataset: HDF5DiffusionDataset,
@@ -220,22 +256,25 @@ def train(
     nu = h5_dataset.U.shape[-2:]
     train_state = create_train_state(network, nx, nu, options, init_rng)
 
+    # Load the first superbatch into GPU memory
+    # TODO: shuffle and handle case where num_superbatches > 1
+    superbatch = h5_dataset[:] 
+
     metrics = {"train_loss": [], "val_loss": []}
     for epoch in range(options.epochs):
+        # Shuffle the training data
         rng, epoch_rng = jax.random.split(rng)
-        train_state, train_metrics = train_epoch(
-            train_state, h5_dataset, options, epoch_rng
+        perm = jax.random.permutation(epoch_rng, superbatch_size)
+        superbatch = jax.tree_map(lambda x: x[perm], superbatch)
+
+        # Train on the superbatch
+        train_state, train_metrics = train_superbatch(
+            train_state, superbatch, options
         )
 
         # Print some training statistics
-        loss = jnp.mean(jnp.array(train_metrics["losses"]))
-        load_time = jnp.sum(jnp.array(train_metrics["load_times"]))
-        train_time = jnp.sum(jnp.array(train_metrics["train_times"]))
-        metrics["train_loss"].append(loss)
-
         print(f"Epoch {epoch + 1} / {options.epochs}, "
-              f"train loss: {loss:.4f}, "
-              f"load time: {load_time:.2f}s, "
-              f"train time: {train_time:.2f}s")
+              f"train loss: {train_metrics['loss']:.4f}, "
+              f"train time: {train_metrics['train_time']:.3f}s")
 
     return train_state.params, metrics
