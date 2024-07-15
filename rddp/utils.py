@@ -1,7 +1,9 @@
 from typing import Callable, Tuple
 
+import h5py
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax.struct import dataclass
 
 
@@ -63,6 +65,7 @@ def annealed_langevin_sample(
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
     ],
     rng: jax.random.PRNGKey,
+    noise_range: Tuple[int, int] = None,
 ) -> Tuple[jnp.ndarray, DiffusionDataset]:
     """Generate a sample from the target distribution p(U | x₀).
 
@@ -84,9 +87,21 @@ def annealed_langevin_sample(
         u_init: An initial control sequence, typically U ~ N(0, σ_L²).
         score_fn: A (possibly stochastic) score estimate function ŝ(x₀, U, σ).
         rng: The random number generator key.
+        noise_range: The range of noise levels to sample from. If None, sample
+            from L to 0. This option is useful for dataset generation, where we
+            want to save out to a file during the annealing process.
     """
     L = options.num_noise_levels
     sigmaL = options.starting_noise_level
+
+    if noise_range is None:
+        start_step, end_step = L, 0
+    else:
+        start_step, end_step = noise_range
+        assert start_step >= end_step, "start_step should be >= end_step"
+        assert start_step <= L, "start_step should be <= L"
+        assert end_step >= 0, "end_step should be >= 0"
+
     N = options.num_steps
     alpha = options.step_size
     beta = options.noise_injection_level
@@ -137,7 +152,7 @@ def annealed_langevin_sample(
     (U, _), dataset = jax.lax.scan(
         annealed_langevin_step,
         (u_init, sampling_rng),
-        jnp.arange(L - 1, -1, -1),
+        jnp.arange(start_step - 1, end_step - 1, -1),
     )
 
     return U, dataset
@@ -176,3 +191,64 @@ def sample_dataset(
         k=dataset.k[idxs],
         sigma=dataset.sigma[idxs],
     )
+
+
+class HDF5DiffusionDataset:
+    """A wrapper around an HDF5 file containing a diffusion dataset.
+
+    Provides a simple interface reading data that is stored on disc in an HDF5
+    file. This is essential for working with large datasets that do not fit
+    into memory.
+    """
+
+    def __init__(self, file: h5py.File):
+        """Initialize the dataset wrapper.
+
+        Note that this loads the entire dataset into CPU memory.
+
+        Args:
+            file: The HDF5 file. Must be open in read mode on construction.
+        """
+        # Load the data from the HDF5 file into CPU memory. For some reason
+        # conversion to jnp arrays is super slow when done directly from the
+        # HDF5 file, so we load everything into CPU memory first and only move
+        # to GPU when the data is accessed with __getitem__.
+        self.x0 = np.array(file["x0"], dtype=jnp.float32)
+        self.U = np.array(file["U"], dtype=jnp.float32)
+        self.s = np.array(file["s"], dtype=jnp.float32)
+        self.sigma = np.array(file["sigma"], dtype=jnp.float32)
+        self.k = np.array(file["k"], dtype=jnp.int32)
+
+        # Size checks
+        self.num_data_points = self.x0.shape[0]
+        assert self.U.shape[0] == self.num_data_points
+        assert self.s.shape[0] == self.num_data_points
+        assert self.sigma.shape[0] == self.num_data_points
+        assert self.k.shape[0] == self.num_data_points
+        assert self.U.shape == self.s.shape
+        assert self.sigma.shape == self.k.shape
+
+    def __len__(self) -> int:
+        """Return the number of data points in the dataset."""
+        return self.num_data_points
+
+    def __getitem__(self, idx: int) -> DiffusionDataset:
+        """Load the data at the given indices into GPU memory.
+
+        This allows us to access the data with slicing syntax, e.g.,
+
+            my_jax_batch = my_hdf5_dataset[10:20]
+
+        Args:
+            idx: The index of the data point to extract.
+
+        Returns:
+            A jax dataset object containing the data at the given indices.
+        """
+        return DiffusionDataset(
+            x0=jnp.asarray(self.x0[idx], dtype=jnp.float32),
+            U=jnp.asarray(self.U[idx], dtype=jnp.float32),
+            s=jnp.asarray(self.s[idx], dtype=jnp.float32),
+            sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),
+            k=jnp.asarray(self.k[idx], dtype=jnp.int32),
+        )
