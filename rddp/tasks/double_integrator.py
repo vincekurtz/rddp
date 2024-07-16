@@ -51,9 +51,9 @@ class DoubleIntegratorProblem(OptimalControlProblem):
         self, x: jnp.ndarray, u: jnp.ndarray, t: int
     ) -> jnp.ndarray:
         """The running cost function."""
-        input_cost = 0.1 * u.dot(u)
+        input_cost = 1.0 * u.dot(u)
         target_state = self.config.target_state
-        state_cost = 0.1 * (x - target_state).dot(x - target_state)
+        state_cost = 0.01 * (x - target_state).dot(x - target_state)
         return input_cost + state_cost
 
     def terminal_cost(self, x: jnp.ndarray) -> jnp.ndarray:
