@@ -56,6 +56,7 @@ ignore = [
     "E731",  # assigning to a `lambda` expression
     "N806",  # only lowercase variables in functions
     "PLR0913",  # too many arguments
+    "PLR2004",  # magic value used in comparison
 ]
 
 [tool.ruff.lint.isort]

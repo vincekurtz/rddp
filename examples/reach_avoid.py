@@ -10,6 +10,7 @@ from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.gradient_descent import solve as solve_gd
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
@@ -48,21 +49,9 @@ def solve_with_gradient_descent(
     """Solve the optimal control problem using simple gradient descent."""
     prob = ReachAvoid(num_steps=HORIZON)
     x0 = jnp.array([0.1, -1.5])
+    u_guess = u_guess * jnp.ones((prob.num_steps - 1, prob.sys.action_shape[0]))
 
-    cost_and_grad = jax.jit(
-        jax.value_and_grad(lambda us: prob.total_cost(us, x0))
-    )
-    U = u_guess * jnp.ones((prob.num_steps - 1, prob.sys.action_shape[0]))
-    J, grad = cost_and_grad(U)
-
-    st = time.time()
-    for i in range(5000):
-        J, grad = cost_and_grad(U)
-        U -= 1e-2 * grad
-
-        if i % 1000 == 0:
-            print(f"Step {i}, cost {J}, grad {jnp.linalg.norm(grad)}")
-    print(f"Gradient descent took {time.time() - st:.2f} seconds")
+    U, _, _ = solve_gd(prob, x0, u_guess)
 
     if plot:
         X = prob.sys.rollout(U, x0)
@@ -308,7 +297,6 @@ if __name__ == "__main__":
     if len(sys.argv) != num_args + 1:
         print(usage)
         sys.exit(1)
-
     if sys.argv[1] == "generate":
         generate_dataset(plot=True)
     elif sys.argv[1] == "fit":
