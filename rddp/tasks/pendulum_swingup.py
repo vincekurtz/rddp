@@ -22,7 +22,7 @@ class PendulumSwingupConfig:
         terminal_cost: The weight of the terminal state cost.
     """
 
-    time_step: float = 0.1
+    time_step: float = 0.2
     position_limits: Tuple[float, float] = (-1.5 * jnp.pi, 1.5 * jnp.pi)
     velocity_limits: Tuple[float, float] = (-10, 10)
     control_cost: float = 0.01
@@ -30,7 +30,7 @@ class PendulumSwingupConfig:
     terminal_cost: float = 1.0
 
 
-class PendulumSwingupProblem(OptimalControlProblem):
+class PendulumSwingup(OptimalControlProblem):
     """An inverted pendulum must swing up to the upright position."""
 
     def __init__(
@@ -52,15 +52,16 @@ class PendulumSwingupProblem(OptimalControlProblem):
 
     def _state_cost(self, x: jnp.ndarray) -> jnp.ndarray:
         """Penalty encouraging the pendulum to swing up."""
-        y = self.system.g(x)
-        state_err = jnp.array([1.0, 0.0, 0.0]) - y
+        # y = self.sys.g(x)
+        # state_err = jnp.array([1.0, 0.0, 0.0]) - y
+        state_err = x
         return state_err.dot(state_err)
 
     def running_cost(
         self, x: jnp.ndarray, u: jnp.ndarray, t: int
     ) -> jnp.ndarray:
         """The running cost function."""
-        input_cost = self.config.input_cost * u.dot(u)
+        input_cost = self.config.control_cost * u.dot(u)
         state_cost = self.config.state_cost * self._state_cost(x)
         return input_cost + state_cost
 
@@ -70,15 +71,14 @@ class PendulumSwingupProblem(OptimalControlProblem):
 
     def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
         """Sample an initial state."""
+        rng, pos_rng, vel_rng = jax.random.split(rng, 3)
         pos = jax.random.uniform(
-            rng,
-            (1,),
+            pos_rng,
             minval=self.config.position_limits[0],
             maxval=self.config.position_limits[1],
         )
         vel = jax.random.uniform(
-            rng,
-            (1,),
+            vel_rng,
             minval=self.config.velocity_limits[0],
             maxval=self.config.velocity_limits[1],
         )
