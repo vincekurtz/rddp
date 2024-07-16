@@ -1,5 +1,9 @@
-from typing import Any, Tuple
+import functools
+import time
+from pathlib import Path
+from typing import Any, Tuple, Union
 
+import h5py
 import jax
 import jax.numpy as jnp
 import optax
@@ -7,7 +11,7 @@ from flax import linen as nn
 from flax.struct import dataclass
 from flax.training.train_state import TrainState
 
-from rddp.utils import DiffusionDataset
+from rddp.utils import DiffusionDataset, HDF5DiffusionDataset
 
 Params = Any
 
@@ -21,11 +25,14 @@ class TrainingOptions:
 
     Attributes:
         batch_size: The batch size for training.
+        num_superbatches: The number of chunks to split the dataset into. Each
+            superbatch is a collection of batches that are loaded into memory.
         epochs: The number of training epochs.
         learning_rate: The learning rate for training.
     """
 
     batch_size: int
+    num_superbatches: int
     epochs: int
     learning_rate: float
 
@@ -61,7 +68,6 @@ def create_train_state(
     )
 
 
-@jax.jit
 def apply_model(
     state: TrainState, batch: DiffusionDataset
 ) -> Tuple[jnp.ndarray, Params]:
@@ -104,50 +110,48 @@ def update_model(state: TrainState, grad: Params) -> TrainState:
     return state.apply_gradients(grads=grad)
 
 
-def train_epoch(
+@functools.partial(jax.jit, static_argnums=(2,), donate_argnums=(0,))
+def train_superbatch(
     train_state: TrainState,
     dataset: DiffusionDataset,
-    batch_size: int,
-    rng: jax.random.PRNGKey,
-) -> Tuple[TrainState, float]:
-    """Perform an epoch of training on the given dataset.
+    options: TrainingOptions,
+) -> Tuple[TrainState, jnp.ndarray]:
+    """Train on a superbatch (large portion of the dataset).
 
     Args:
-        train_state: The training state holding the parameters
-        dataset: The training dataset.
-        batch_size: The batch size.
-        rng: The random number generator.
+        train_state: The training state holding the parameters.
+        dataset: The shuffled superbatch of training data, loaded on the GPU.
+        options: The training options, like batch size etc.
 
     Returns:
-        The updated training state and the average training loss.
+        The updated training state and the latest training loss
     """
-    num_data_points = len(dataset.x0)
-    steps_per_epoch = num_data_points // batch_size
+    superbatch_size = len(dataset.x0)
+    num_batches = superbatch_size // options.batch_size
 
-    # Shuffle the dataset
-    perms = jax.random.permutation(rng, num_data_points)
-    perms = perms[: steps_per_epoch * batch_size]  # Truncate to full batches
-    perms = perms.reshape((steps_per_epoch, batch_size))
+    def scan_fn(carry: Tuple[TrainState, jnp.ndarray], batch: int):
+        train_state, _ = carry
+        batch_data = jax.tree.map(
+            lambda x: jax.lax.dynamic_slice_in_dim(
+                x, batch * options.batch_size, options.batch_size
+            ),
+            dataset,
+        )
 
-    def apply_batch(train_state: TrainState, i: int):
-        """Train the model on a single batch of data."""
-        perm = perms[i]
-        batch = jax.tree.map(lambda x: x[perm, ...], dataset)
-        loss, grad = apply_model(train_state, batch)
+        loss, grad = apply_model(train_state, batch_data)
         train_state = update_model(train_state, grad)
-        return train_state, loss
+        return (train_state, loss), None
 
-    # Update the model on each batch
-    train_state, losses = jax.lax.scan(
-        apply_batch, train_state, jnp.arange(steps_per_epoch)
+    (train_state, loss), _ = jax.lax.scan(
+        scan_fn, (train_state, 0.0), jnp.arange(num_batches)
     )
 
-    return train_state, jnp.mean(losses)
+    return train_state, loss
 
 
 def train(
     network: nn.Module,  # TODO: make a custom score network type
-    dataset: DiffusionDataset,
+    dataset_file: Union[str, Path],
     options: TrainingOptions,
     seed: int = 0,
 ) -> Tuple[Params, dict]:
@@ -155,7 +159,7 @@ def train(
 
     Args:
         network: The score network to train.
-        dataset: The training dataset.
+        dataset_file: Path to the hdf5 file containing the dataset.
         options: The training options.
         seed: The random seed.
 
@@ -163,38 +167,90 @@ def train(
         The trained score network parameters and some training metrics.
     """
     rng = jax.random.PRNGKey(seed)
+    dataset_file = Path(dataset_file)
 
-    # Shuffle the dataset
-    num_data_points = len(dataset.x0)
-    rng, shuffle_rng = jax.random.split(rng)
-    perm = jax.random.permutation(shuffle_rng, num_data_points)
+    # Load the dataset from disc to CPU memory
+    with h5py.File(dataset_file, "r") as f:
+        h5_dataset = HDF5DiffusionDataset(f)
 
-    # Split the dataset into training and validation sets
-    num_val = num_data_points // 10
-    num_val = min(num_val, 10 * options.batch_size)  # Cap to avoid OOM issues
-    num_train = num_data_points - num_val
-    train_idx = perm[:num_train]
-    val_idx = perm[num_train:]
-    train_data = jax.tree.map(lambda x: x[train_idx], dataset)
-    val_data = jax.tree.map(lambda x: x[val_idx], dataset)
+    # Compute some useful quantities and check sizes
+    num_data_points = len(h5_dataset)
+    assert num_data_points % options.num_superbatches == 0, (
+        f"data points {num_data_points} not divisible by "
+        f"number of superbatches {options.num_superbatches}."
+    )
+    superbatch_size = num_data_points // options.num_superbatches
+    assert superbatch_size >= options.batch_size, (
+        f"superbatch size {superbatch_size} is smaller than "
+        f"batch size {options.batch_size}."
+    )
+    assert superbatch_size % options.batch_size == 0, (
+        f"superbatch size {superbatch_size} not divisible by "
+        f"batch size {options.batch_size}."
+    )
+    num_batches = superbatch_size // options.batch_size
+
+    print("Training with: ")
+    print(f"  {num_data_points} data points")
+    print(f"  {options.batch_size} batch size")
+    print(f"  {num_batches * options.num_superbatches} batches per epoch")
+    print(f"  {options.num_superbatches} superbatches per epoch")
+    print(f"  {options.epochs} epochs")
 
     # Initialize the training state
     rng, init_rng = jax.random.split(rng)
-    nx = dataset.x0.shape[-1:]  # TODO: support more generic shapes
-    nu = dataset.U.shape[-2:]
+    nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
+    nu = h5_dataset.U.shape[-2:]
     train_state = create_train_state(network, nx, nu, options, init_rng)
 
-    # Train the model
-    metrics = {"train_loss": [], "val_loss": []}
+    # Load the full dataset into GPU memory if we can. Otherwise we will load
+    # superbatches one at a time in each epoch.
+    if options.num_superbatches == 1:
+        superbatch = h5_dataset[:]
+
+    # Helper function for shuffling the dataset
+    jit_shuffle = jax.jit(
+        lambda data, perm: jax.tree_map(lambda x: x[perm], data)
+    )
+
+    metrics = {"loss": [], "load_time": [], "train_time": []}
     for epoch in range(options.epochs):
         rng, epoch_rng = jax.random.split(rng)
-        train_state, train_loss = train_epoch(
-            train_state, train_data, options.batch_size, epoch_rng
-        )
-        val_loss, _ = apply_model(train_state, val_data)
+        perm = jax.random.permutation(epoch_rng, num_data_points)
 
-        print(f"Epoch {epoch}, loss {train_loss:.4f}, val loss {val_loss:.4f}")
-        metrics["train_loss"].append(train_loss)
-        metrics["val_loss"].append(val_loss)
+        # Train on each superbatch
+        load_time = 0.0
+        train_time = 0.0
+        for s in range(options.num_superbatches):
+            st = time.time()
+            if options.num_superbatches == 1:
+                # The superbatch is already loaded, we'll just shuffle it
+                superbatch = jit_shuffle(superbatch, perm)
+            else:
+                # Load the superbatch into GPU memory. This is the slowest part.
+                idxs = perm[s * superbatch_size : (s + 1) * superbatch_size]
+                superbatch = h5_dataset[idxs]
+            jax.block_until_ready(superbatch)
+            load_time += time.time() - st
+
+            # Train on the superbatch
+            st = time.time()
+            train_state, loss = train_superbatch(
+                train_state, superbatch, options
+            )
+            jax.block_until_ready(loss)
+            train_time += time.time() - st
+
+        metrics["loss"].append(loss)
+        metrics["load_time"].append(load_time)
+        metrics["train_time"].append(train_time)
+
+        # Print some training statistics
+        print(
+            f"Epoch {epoch + 1} / {options.epochs}, "
+            f"loss: {loss:.4f}, "
+            f"load time: {load_time:.4f}s, "
+            f"train time: {train_time:.4f}s"
+        )
 
     return train_state.params, metrics

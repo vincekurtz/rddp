@@ -1,11 +1,14 @@
+from pathlib import Path
+
+import h5py
 import jax
 import jax.numpy as jnp
 
 from rddp.architectures import DiffusionPolicyMLP
-from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
-from rddp.utils import AnnealedLangevinOptions
+from rddp.utils import AnnealedLangevinOptions, HDF5DiffusionDataset
 
 
 class ReachAvoidFixedX0(ReachAvoid):
@@ -30,6 +33,10 @@ def test_training() -> None:
     """Test the main training loop."""
     rng = jax.random.PRNGKey(0)
 
+    # Make a temporary directory for the dataset
+    local_dir = Path("_test_training")
+    local_dir.mkdir(parents=True, exist_ok=True)
+
     # Generate a training dataset
     prob = ReachAvoidFixedX0(num_steps=5, start_state=jnp.array([0.1, -1.5]))
     langevin_options = AnnealedLangevinOptions(
@@ -40,26 +47,32 @@ def test_training() -> None:
     )
     gen_options = DatasetGenerationOptions(
         temperature=0.001,
-        num_initial_states=16,
+        num_initial_states=256,
         num_rollouts_per_data_point=8,
+        save_every=100,
+        save_path=local_dir,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
     rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate(gen_rng)
+    generator.generate_and_save(gen_rng)
+    assert (local_dir / "dataset.h5").exists()
 
     # Train a score network
     options = TrainingOptions(
-        batch_size=128,
+        batch_size=512,
+        num_superbatches=4,
         epochs=4,
         learning_rate=1e-3,
     )
     net = DiffusionPolicyMLP(layer_sizes=(32,) * 3)
 
-    params, metrics = train(net, dataset, options)
-    assert metrics["train_loss"][-1] < metrics["train_loss"][0]
-    assert metrics["val_loss"][-1] < metrics["val_loss"][0]
+    params, metrics = train(net, local_dir / "dataset.h5", options)
+    assert metrics["loss"][-1] < metrics["loss"][0]
 
     test_idx = 129
+    with h5py.File(local_dir / "dataset.h5", "r") as f:
+        h5_dataset = HDF5DiffusionDataset(f)
+        dataset = h5_dataset[...]
     score_estimate = net.apply(
         params,
         dataset.x0[test_idx],
@@ -67,6 +80,11 @@ def test_training() -> None:
         dataset.sigma[test_idx],
     )
     assert score_estimate.shape == dataset.s[test_idx].shape
+
+    # Remove the temporary directory
+    for p in local_dir.iterdir():
+        p.unlink()
+    local_dir.rmdir()
 
 
 if __name__ == "__main__":

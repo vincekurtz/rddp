@@ -21,6 +21,7 @@ dependencies = [
     "ruff>=0.4.10",
     "pre-commit>=3.7.1",
     "matplotlib>=3.8.3",
+    "h5py>=3.11.0",
 ]
 
 [tool.ruff]
@@ -54,6 +55,7 @@ ignore = [
     "D213",  # multi-line docstring summary at second line
     "E731",  # assigning to a `lambda` expression
     "N806",  # only lowercase variables in functions
+    "PLR0913",  # too many arguments
 ]
 
 [tool.ruff.lint.isort]

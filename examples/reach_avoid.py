@@ -2,18 +2,20 @@ import pickle
 import sys
 import time
 
+import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import DiffusionPolicyMLP
-from rddp.data_generation import DatasetGenerationOptions, DatasetGenerator
+from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
+    HDF5DiffusionDataset,
     annealed_langevin_sample,
     sample_dataset,
 )
@@ -68,87 +70,6 @@ def solve_with_gradient_descent(
         plt.plot(X[:, 0], X[:, 1], "o-")
         plt.show()
     return U
-
-
-def generate_dataset_from_demos(save: bool = False, plot: bool = False) -> None:
-    """Generate data from "demonstrations" (a.k.a. gradient descent solutions).
-
-    Saves data to a file just like generate_dataset, but this data is based on
-    a more standard score matching framework.
-    """
-    rng = jax.random.PRNGKey(0)
-
-    # Problem setup
-    x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
-    langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
-        starting_noise_level=0.5,
-        num_steps=100,
-        step_size=0.01,
-    )
-    gen_options = DatasetGenerationOptions(
-        temperature=0.001,
-        num_initial_states=256,
-        num_rollouts_per_data_point=128,
-    )
-
-    # Solve gradient descent with two different guesses
-    U1 = solve_with_gradient_descent(plot=False, u_guess=1.0)
-    U2 = solve_with_gradient_descent(plot=False, u_guess=-1.0)
-    U_demo = jnp.array([U1, U2])
-
-    # Generate the dataset
-    sigma_L = langevin_options.starting_noise_level
-    L = langevin_options.num_noise_levels
-
-    def scan_fn(rng: jax.random.PRNGKey, k: int):
-        """Generate a data point by adding noise to a demonstration."""
-        rng, demo_rng = jax.random.split(rng)
-        demo_idx = jax.random.randint(demo_rng, (1,), 0, 2)[0]
-        U = U_demo[demo_idx]
-
-        # Add noise to the demonstration
-        sigma = sigma_L * jnp.exp(-4 * (L - k) / L)
-        rng, noise_rng = jax.random.split(rng)
-        U_tilde = U + sigma * jax.random.normal(noise_rng, U.shape)
-
-        # Estimate the score
-        s = (U - U_tilde) / sigma**2
-        return rng, (x0, U_tilde, s, jnp.array([k]), jnp.array([sigma]))
-
-    def generate_noised_data(rng: jax.random.PRNGKey):
-        """Generate some training data across all noise levels."""
-        rng, gen_rng = jax.random.split(rng)
-        rng, (x0, U, s, k, sigma) = jax.lax.scan(
-            scan_fn, gen_rng, jnp.arange(L)
-        )
-        return DiffusionDataset(x0, U, s, k, sigma)
-
-    num_data_points = (
-        gen_options.num_initial_states * langevin_options.num_steps
-    )
-    rng, gen_rng = jax.random.split(rng)
-    gen_rng = jax.random.split(gen_rng, num_data_points)
-    dataset = jax.vmap(generate_noised_data)(gen_rng)
-
-    # Flatten the dataset
-    dataset = jax.tree.map(
-        lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
-    )
-
-    # Save the data if requested
-    fname = "/tmp/reach_avoid_dataset.pkl"
-    if save:
-        with open(fname, "wb") as f:
-            pickle.dump(
-                {"dataset": dataset, "langevin_options": langevin_options}, f
-            )
-        print(f"Saved dataset to {fname}")
-
-    # Make some plots if requested
-    if plot:
-        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
 
 def visualize_dataset(
@@ -209,9 +130,10 @@ def visualize_dataset(
     plt.show()
 
 
-def generate_dataset(save: bool = False, plot: bool = False) -> None:
+def generate_dataset(plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
+    save_path = "/tmp/reach_avoid/"
 
     # Problem setup
     prob = ReachAvoid(num_steps=HORIZON)
@@ -220,42 +142,51 @@ def generate_dataset(save: bool = False, plot: bool = False) -> None:
         starting_noise_level=0.5,
         num_steps=100,
         step_size=0.01,
+        noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         temperature=0.001,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
+        save_every=100,
+        save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    dataset = generator.generate(gen_rng)
+    generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
-
-    # Save the data if requested
-    fname = "/tmp/reach_avoid_dataset.pkl"
-    if save:
-        generator.save_dataset(dataset, fname)
-        print(f"Saved dataset to {fname}")
 
     # Make some plots if requested
     if plot:
+        # Select every Nth data point for visualization. This avoids loading
+        # the full dataset into memory.
+        N = 10
+        st = time.time()
+        with h5py.File(save_path + "dataset.h5", "r") as f:
+            h5_dataset = HDF5DiffusionDataset(f)
+            idxs = jnp.arange(0, len(h5_dataset), N)
+            print("Loading...")
+            dataset = h5_dataset[idxs]
+        print(f"Loaded dataset in {time.time() - st:.2f} seconds")
         visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
 
 
 def fit_score_model() -> None:
     """Fit a simple score model to the generated data."""
-    # Load training data from a file (must run generate_dataset first)
-    with open("/tmp/reach_avoid_dataset.pkl", "rb") as f:
-        data = pickle.load(f)
-    dataset = data["dataset"]
-    langevin_options = data["langevin_options"]
+    # Specify location of the training data
+    data_dir = "/tmp/reach_avoid/"
+
+    # Load the langiven sampling options
+    with open(data_dir + "langevin_options.pkl", "rb") as f:
+        langevin_options = pickle.load(f)
 
     # Set up the training options and the score network
     training_options = TrainingOptions(
-        batch_size=4096,
+        batch_size=5120,
+        num_superbatches=1,
         epochs=50,
         learning_rate=1e-3,
     )
@@ -263,7 +194,7 @@ def fit_score_model() -> None:
 
     # Train the score network
     st = time.time()
-    params, metrics = train(net, dataset, training_options)
+    params, metrics = train(net, data_dir + "dataset.h5", training_options)
     print(f"Training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters
@@ -371,9 +302,7 @@ def deploy_trained_model(
 
 
 if __name__ == "__main__":
-    usage = (
-        "Usage: python reach_avoid.py [generate|fit|deploy|gd|demos|animate]"
-    )
+    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|animate]"
 
     num_args = 1
     if len(sys.argv) != num_args + 1:
@@ -381,9 +310,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if sys.argv[1] == "generate":
-        generate_dataset(save=True, plot=True)
-    elif sys.argv[1] == "demos":
-        generate_dataset_from_demos(save=True, plot=True)
+        generate_dataset(plot=True)
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
