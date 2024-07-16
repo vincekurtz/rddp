@@ -293,8 +293,7 @@ def deploy_trained_model(
 if __name__ == "__main__":
     usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|animate]"
 
-    num_args = 1
-    if len(sys.argv) != num_args + 1:
+    if len(sys.argv) != 2:
         print(usage)
         sys.exit(1)
     if sys.argv[1] == "generate":
