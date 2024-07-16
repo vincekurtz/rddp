@@ -2,7 +2,6 @@ import pickle
 import sys
 import time
 
-import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -11,121 +10,33 @@ from matplotlib.animation import FuncAnimation
 from rddp.architectures import DiffusionPolicyMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.gradient_descent import solve as solve_gd
-from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.tasks.double_integrator import DoubleIntegratorProblem
 from rddp.training import TrainingOptions, train
-from rddp.utils import (
-    AnnealedLangevinOptions,
-    DiffusionDataset,
-    HDF5DiffusionDataset,
-    annealed_langevin_sample,
-    sample_dataset,
-)
+from rddp.utils import AnnealedLangevinOptions, annealed_langevin_sample
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 10
 
 
-class ReachAvoidFixedX0(ReachAvoid):
-    """A reach-avoid problem with a fixed initial state."""
-
-    def __init__(self, num_steps: int, start_state: jnp.ndarray):
-        """Initialize the reach-avoid problem.
-
-        Args:
-            num_steps: The number of time steps T.
-            start_state: The initial state x0.
-        """
-        super().__init__(num_steps)
-        self.x0 = start_state
-
-    def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
-        """Sample the initial state x₀."""
-        return self.x0
-
-
-def solve_with_gradient_descent(
-    plot: bool = True, u_guess: float = 0.0
-) -> None:
+def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    prob = ReachAvoid(num_steps=HORIZON)
-    x0 = jnp.array([0.1, -1.5])
-    u_guess = u_guess * jnp.ones((prob.num_steps - 1, prob.sys.action_shape[0]))
+    prob = DoubleIntegratorProblem(num_steps=HORIZON)
+    x0 = jnp.array([-1.1, 1.4])
+    U, _, _ = solve_gd(prob, x0)
 
-    U, _, _ = solve_gd(prob, x0, u_guess)
-
-    if plot:
-        X = prob.sys.rollout(U, x0)
-        prob.plot_scenario()
-        plt.plot(X[:, 0], X[:, 1], "o-")
-        plt.show()
-    return U
-
-
-def visualize_dataset(
-    dataset: DiffusionDataset, prob: ReachAvoid, num_noise_levels: int
-) -> None:
-    """Make some plots of the generated dataset.
-
-    Args:
-        dataset: The generated dataset.
-        prob: The reach-avoid problem instance to use for plotting.
-        num_noise_levels: The number of noise levels in the dataset.
-    """
-    rng = jax.random.PRNGKey(0)
-
-    noise_levels = [
-        0,
-        int(num_noise_levels / 4),
-        int(num_noise_levels / 2),
-        int(3 * num_noise_levels / 4),
-        num_noise_levels - 1,
-    ]
-
-    # Plot samples at certain iterations
-    fig, ax = plt.subplots(1, len(noise_levels))
-    for i, k in enumerate(noise_levels):
-        plt.sca(ax[i])
-
-        # Get a random subset of the data at this noise level
-        rng, sample_rng = jax.random.split(rng)
-        subset = sample_dataset(dataset, k, 32, sample_rng)
-
-        # Plot the scenario and the sampled trajectories
-        prob.plot_scenario()
-        Xs = jax.vmap(prob.sys.rollout)(subset.U, subset.x0)
-        px, py = Xs[:, :, 0].T, Xs[:, :, 1].T
-        ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
-
-        sigma = subset.sigma[0, 0]
-        ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
-
-    # Plot costs at each iteration
-    plt.figure()
-    jit_cost = jax.jit(jax.vmap(prob.total_cost))
-    for k in range(num_noise_levels):
-        iter = num_noise_levels - k
-
-        # Get a random subset of the data at this noise level
-        rng, sample_rng = jax.random.split(rng)
-        subset = sample_dataset(dataset, k, 32, sample_rng)
-
-        # Compute the cost of each trajectory and add it to the plot
-        costs = jit_cost(subset.U, subset.x0)
-        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
-    plt.xlabel("Iteration (L - k)")
-    plt.ylabel("Cost J(U, x₀)")
-    plt.yscale("log")
-
+    prob.plot_scenario()
+    X = prob.sys.rollout(U, x0)
+    plt.plot(X[:, 0], X[:, 1], "o-")
     plt.show()
 
 
-def generate_dataset(plot: bool = False) -> None:
-    """Generate some data and make plots of it."""
+def generate_dataset(plot: bool = True) -> None:
+    """Generate some training data."""
     rng = jax.random.PRNGKey(0)
-    save_path = "/tmp/reach_avoid/"
+    save_path = "/tmp/double_integrator"
 
     # Problem setup
-    prob = ReachAvoid(num_steps=HORIZON)
+    prob = DoubleIntegratorProblem(num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
@@ -142,31 +53,18 @@ def generate_dataset(plot: bool = False) -> None:
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
-    # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
     generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
-    # Make some plots if requested
-    if plot:
-        # Select every Nth data point for visualization. This avoids loading
-        # the full dataset into memory.
-        N = 10
-        st = time.time()
-        with h5py.File(save_path + "dataset.h5", "r") as f:
-            h5_dataset = HDF5DiffusionDataset(f)
-            idxs = jnp.arange(0, len(h5_dataset), N)
-            print("Loading...")
-            dataset = h5_dataset[idxs]
-        print(f"Loaded dataset in {time.time() - st:.2f} seconds")
-        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
+    # TODO: make plots
 
 
 def fit_score_model() -> None:
     """Fit a simple score model to the generated data."""
     # Specify location of the training data
-    data_dir = "/tmp/reach_avoid/"
+    data_dir = "/tmp/double_integrator/"
 
     # Load the langiven sampling options
     with open(data_dir + "langevin_options.pkl", "rb") as f:
@@ -187,7 +85,7 @@ def fit_score_model() -> None:
     print(f"Training took {time.time() - st:.2f} seconds")
 
     # Save the trained model and parameters
-    fname = "/tmp/reach_avoid_score_model.pkl"
+    fname = "/tmp/double_integrator_score_model.pkl"
     with open(fname, "wb") as f:
         data = {
             "params": params,
@@ -203,10 +101,10 @@ def deploy_trained_model(
 ) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = ReachAvoid(num_steps=HORIZON)
+    prob = DoubleIntegratorProblem(num_steps=HORIZON)
 
     # Load the trained score network
-    with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
+    with open("/tmp/double_integrator_score_model.pkl", "rb") as f:
         data = pickle.load(f)
     params = data["params"]
     net = data["net"]
@@ -220,7 +118,7 @@ def deploy_trained_model(
         # Guess an initial control sequence
         rng, guess_rng = jax.random.split(rng, 2)
         U_guess = options.starting_noise_level * jax.random.normal(
-            guess_rng, (prob.num_steps - 1, 2)
+            guess_rng, (prob.num_steps - 1, 1)
         )
 
         # Set the initial state
@@ -291,20 +189,18 @@ def deploy_trained_model(
 
 
 if __name__ == "__main__":
-    usage = "Usage: python reach_avoid.py [generate|fit|deploy|gd|animate]"
+    usage = "Usage: python double_integrator.py [generate|fit|deploy|gd]"
 
     if len(sys.argv) != 2:
         print(usage)
         sys.exit(1)
-    if sys.argv[1] == "generate":
-        generate_dataset(plot=True)
+    if sys.argv[1] == "gd":
+        solve_with_gradient_descent()
+    elif sys.argv[1] == "generate":
+        generate_dataset()
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
-        deploy_trained_model()
-    elif sys.argv[1] == "gd":
-        solve_with_gradient_descent()
-    elif sys.argv[1] == "animate":
         deploy_trained_model(plot=False, animate=True)
     else:
         print(usage)

@@ -57,7 +57,7 @@ def test_annealed_langevin_sample() -> None:
     assert data.k.shape == (options.num_noise_levels, options.num_steps, 1)
 
     cost = cost_fn(U)
-    assert cost < 0.1  # noqa: PLR2004
+    assert cost < 0.1
 
     # Now do it again without noise injection. This is gradient descent rather
     # than Langevin dynamics, so we should get much closer to u_nom.
@@ -71,7 +71,7 @@ def test_annealed_langevin_sample() -> None:
     )
 
     zero_noise_cost = cost_fn(U)
-    assert zero_noise_cost < 1e-4  # noqa: PLR2004
+    assert zero_noise_cost < 1e-4
     assert zero_noise_cost < cost
 
     # Check that we can just do a subset of the steps.
