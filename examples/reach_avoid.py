@@ -133,11 +133,10 @@ def visualize_dataset(
 def generate_dataset(plot: bool = False) -> None:
     """Generate some data and make plots of it."""
     rng = jax.random.PRNGKey(0)
-    x0 = jnp.array([-0.1, -1.5])
     save_path = "/tmp/reach_avoid/"
 
     # Problem setup
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
+    prob = ReachAvoid(num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
@@ -215,10 +214,7 @@ def deploy_trained_model(
 ) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-
-    # Set up the system
-    x0 = jnp.array([-0.1, -1.5])
-    prob = ReachAvoidFixedX0(num_steps=HORIZON, start_state=x0)
+    prob = ReachAvoid(num_steps=HORIZON)
 
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
@@ -237,6 +233,10 @@ def deploy_trained_model(
         U_guess = options.starting_noise_level * jax.random.normal(
             guess_rng, (prob.num_steps - 1, 2)
         )
+
+        # Set the initial state
+        rng, state_rng = jax.random.split(rng)
+        x0 = prob.sample_initial_state(state_rng)
 
         # Do annealed langevin sampling
         rng, langevin_rng = jax.random.split(rng)
@@ -258,14 +258,14 @@ def deploy_trained_model(
     opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
     Us, data = jax.vmap(optimize_control_tape)(opt_rng)
+    x0s = data.x0[:, -1, -1, :]  # sample, noise step, time step, dim
     print(f"Sample generation took {time.time() - st:.2f} seconds")
-    Xs = jax.vmap(prob.sys.rollout, in_axes=(0, None))(Us, x0)
-    costs = jax.vmap(prob.total_cost, in_axes=(0, None))(Us, x0)
+    Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
+    costs = jax.vmap(prob.total_cost)(Us, x0s)
     print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
 
     # Plot the sampled trajectories
     if plot:
-        plt.figure()
         prob.plot_scenario()
         for i in range(num_samples):
             plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
@@ -280,19 +280,20 @@ def deploy_trained_model(
 
         fig, ax = plt.subplots()
         prob.plot_scenario()
-
-        paths = []
-        for _ in range(num_samples):
-            paths.append(ax.plot([], [], "o-")[0])
+        path = ax.plot([], [], "o-")[0]
 
         def update(i: int):
+            j, i = divmod(i, options.num_noise_levels)
+            j = j % num_samples
             ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
-            for j, path in enumerate(paths):
-                path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
+            path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 
         anim = FuncAnimation(
-            fig, update, frames=options.num_noise_levels, interval=10
+            fig,
+            update,
+            frames=options.num_noise_levels * num_samples,
+            interval=10,
         )
         if save_path is not None:
             anim.save(save_path, writer="ffmpeg", fps=60)
