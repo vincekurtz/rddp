@@ -39,13 +39,13 @@ def generate_dataset(plot: bool = True) -> None:
     prob = PendulumSwingup(num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
-        starting_noise_level=0.5,
+        starting_noise_level=1.0,
         num_steps=100,
         step_size=0.01,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.001,
+        temperature=0.01,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
         save_every=100,
