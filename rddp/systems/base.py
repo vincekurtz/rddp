@@ -80,14 +80,12 @@ class DynamicalSystem(ABC):
             x0: The initial state x₀.
 
         Returns:
-            The state trajectory X = [x₀, x₁, ..., x_T].
+            The state trajectory X = [x₁, ..., x_T].
         """
-        num_steps = control_tape.shape[0]
 
-        def scan_fn(x: jnp.ndarray, t: int):
-            u = control_tape[t]
+        def scan_fn(x: jnp.ndarray, u: jnp.ndarray):
             x_next = self.f(x, u)
             return x_next, x_next
 
-        _, X = jax.lax.scan(scan_fn, x0, jnp.arange(num_steps))
-        return jnp.vstack([x0, X])
+        _, X = jax.lax.scan(scan_fn, x0, control_tape)
+        return X

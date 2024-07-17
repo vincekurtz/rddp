@@ -31,5 +31,18 @@ def test_pendulum() -> None:
     assert jnp.allclose(y, y_pred)
 
 
+def test_rollout() -> None:
+    """Test that we can roll out the pendulum dynamics."""
+    sys = MjxPendulum()
+    data = sys.make_data()
+    data = data.replace(qpos=jnp.array([jnp.pi / 2]), qvel=jnp.array([0.0]))
+
+    control_tape = jnp.zeros((10, 1))
+    all_data = sys.rollout(control_tape, data)
+    assert all_data.qpos.shape == (10, 1)
+    assert all_data.qvel.shape == (10, 1)
+
+
 if __name__ == "__main__":
-    test_pendulum()
+    # test_pendulum()
+    test_rollout()

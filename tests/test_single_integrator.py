@@ -29,11 +29,9 @@ def test_rollout() -> None:
     U = jnp.ones((10, 2))
     x0 = jnp.array([0.1, 0.2])
     X = sys.rollout(U, x0)
-    assert X.shape == (11, 2)
+    assert X.shape == (10, 2)
 
-    X_new = (
-        jnp.cumsum(jnp.concatenate([jnp.zeros((1, 2)), U], axis=0), axis=0) + x0
-    )
+    X_new = jnp.cumsum(U, axis=0) + x0
     assert jnp.all(X == X_new)
 
 
