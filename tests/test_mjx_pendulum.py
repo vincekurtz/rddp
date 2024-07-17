@@ -113,6 +113,6 @@ def test_train() -> None:
 
 
 if __name__ == "__main__":
-    # test_pendulum()
-    # test_rollout()
+    test_pendulum()
+    test_rollout()
     test_train()
