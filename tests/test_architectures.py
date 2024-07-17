@@ -1,31 +1,31 @@
 import jax
 
-from rddp.architectures import DiffusionPolicyMLP
+from rddp.architectures import ScoreMLP
 
 
 def test_mlp() -> None:
     """Test the basic diffusion policy MLP architecture."""
     rng = jax.random.PRNGKey(0)
-    net = DiffusionPolicyMLP(layer_sizes=[32, 32])
+    net = ScoreMLP(layer_sizes=[32, 32])
 
     # Fake data for initialization
-    rng, x_rng, u_rng, sigma_rng = jax.random.split(rng, 4)
-    x0 = jax.random.normal(x_rng, (2,))
+    rng, y_rng, u_rng, sigma_rng = jax.random.split(rng, 4)
+    y0 = jax.random.normal(y_rng, (2,))
     U = jax.random.normal(u_rng, (19, 2))
     sigma = jax.random.normal(sigma_rng, (1,))
 
     # Forward pass with fake data
     rng, params_rng = jax.random.split(rng)
-    params = net.init(params_rng, x0, U, sigma)
-    s = net.apply(params, x0, U, sigma)
+    params = net.init(params_rng, y0, U, sigma)
+    s = net.apply(params, y0, U, sigma)
     assert s.shape == U.shape
 
     # Forward pass with extra (e.g., batch) dimensions
-    rng, x_rng, u_rng, sigma_rng = jax.random.split(rng, 4)
-    x0 = jax.random.normal(x_rng, (3, 4, 2))
+    rng, y_rng, u_rng, sigma_rng = jax.random.split(rng, 4)
+    y0 = jax.random.normal(y_rng, (3, 4, 2))
     U = jax.random.normal(u_rng, (3, 4, 19, 2))
     sigma = jax.random.normal(sigma_rng, (3, 4, 1))
-    s = net.apply(params, x0, U, sigma)
+    s = net.apply(params, y0, U, sigma)
     assert s.shape == U.shape
 
 
