@@ -4,7 +4,7 @@ import h5py
 import jax
 import jax.numpy as jnp
 
-from rddp.architectures import DiffusionPolicyMLP
+from rddp.architectures import ScoreMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.tasks.reach_avoid import ReachAvoid
 from rddp.training import TrainingOptions, train
@@ -64,7 +64,7 @@ def test_training() -> None:
         epochs=4,
         learning_rate=1e-3,
     )
-    net = DiffusionPolicyMLP(layer_sizes=(32,) * 3)
+    net = ScoreMLP(layer_sizes=(32,) * 3)
 
     params, metrics = train(net, local_dir / "dataset.h5", options)
     assert metrics["loss"][-1] < metrics["loss"][0]
@@ -75,7 +75,7 @@ def test_training() -> None:
         dataset = h5_dataset[...]
     score_estimate = net.apply(
         params,
-        dataset.x0[test_idx],
+        dataset.y0[test_idx],
         dataset.U[test_idx],
         dataset.sigma[test_idx],
     )

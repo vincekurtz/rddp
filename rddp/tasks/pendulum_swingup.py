@@ -26,7 +26,7 @@ class PendulumSwingupConfig:
     position_limits: Tuple[float, float] = (-1.5 * jnp.pi, 1.5 * jnp.pi)
     velocity_limits: Tuple[float, float] = (-10, 10)
     control_cost: float = 0.01
-    state_cost: float = 0.01
+    state_cost: float = 0.1
     terminal_cost: float = 1.0
 
 
@@ -52,9 +52,8 @@ class PendulumSwingup(OptimalControlProblem):
 
     def _state_cost(self, x: jnp.ndarray) -> jnp.ndarray:
         """Penalty encouraging the pendulum to swing up."""
-        # y = self.sys.g(x)
-        # state_err = jnp.array([1.0, 0.0, 0.0]) - y
-        state_err = x
+        y = self.sys.g(x)
+        state_err = jnp.array([1.0, 0.0, 0.0]) - y
         return state_err.dot(state_err)
 
     def running_cost(

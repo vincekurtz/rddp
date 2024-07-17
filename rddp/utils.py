@@ -12,14 +12,14 @@ class DiffusionDataset:
     """Training data for a diffusion policy.
 
     Attributes:
-        x0: The initial state x₀.
+        y0: The initial observation y₀.
         U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
-        s: The noised score estimate ŝ = ∇ log pₖ(U | x₀).
+        s: The noised score estimate ŝ = ∇ log pₖ(U | y₀).
         k: The noise level index k.
         sigma: The noise level σₖ.
     """
 
-    x0: jnp.ndarray
+    y0: jnp.ndarray
     U: jnp.ndarray
     s: jnp.ndarray
     k: jnp.ndarray
@@ -32,11 +32,11 @@ class AnnealedLangevinOptions:
 
     Annealed Langevin dynamics samples from the target distribution
 
-        p(U | x₀) ∝ exp(-J(U | x₀) / λ),
+        p(U | y₀) ∝ exp(-J(U | y₀) / λ),
 
     by considering intermediate noised distributions
 
-        pₖ(U | x₀) = ∫ p(Ũ | x₀)N(Ũ;U,σₖ²)dŨ
+        pₖ(U | y₀) = ∫ p(Ũ | y₀)N(Ũ;U,σₖ²)dŨ
 
     with a decreasing sequence of noise levels σₖ.
 
@@ -59,7 +59,7 @@ class AnnealedLangevinOptions:
 
 def annealed_langevin_sample(
     options: AnnealedLangevinOptions,
-    x0: jnp.ndarray,
+    y0: jnp.ndarray,
     u_init: jnp.ndarray,
     score_fn: Callable[
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
@@ -67,25 +67,25 @@ def annealed_langevin_sample(
     rng: jax.random.PRNGKey,
     noise_range: Tuple[int, int] = None,
 ) -> Tuple[jnp.ndarray, DiffusionDataset]:
-    """Generate a sample from the target distribution p(U | x₀).
+    """Generate a sample from the target distribution p(U | y₀).
 
     Annealed Langevin samples intermediate distributions
 
-        pₖ(U | x₀) = ∫ p(Ũ | x₀)N(Ũ;U,σₖ²)dŨ
+        pₖ(U | y₀) = ∫ p(Ũ | y₀)N(Ũ;U,σₖ²)dŨ
 
     with a decreasing sequence of noise levels σₖ. At each level, we sample
-    from pₖ(U | x₀) using Langevin dynamics:
+    from pₖ(U | y₀) using Langevin dynamics:
 
-        Uⁱ⁺¹ = Uⁱ + ε ŝ(x₀, Uⁱ, σₖ) + √(2ε) zⁱ,
+        Uⁱ⁺¹ = Uⁱ + ε ŝ(y₀, Uⁱ, σₖ) + √(2ε) zⁱ,
 
-    where ŝ(x₀, Uⁱ, σₖ) is an estimate of the score ∇ log pₖ(U | x₀),
+    where ŝ(y₀, Uⁱ, σₖ) is an estimate of the score ∇ log pₖ(U | y₀),
     ε = ασₖ² is the step size, and zⁱ ~ N(0, I) is Gaussian noise.
 
     Args:
         options: The annealed Langevin options defining α, σₖ, etc.
-        x0: The initial state x₀ that the target distribution is conditioned on.
+        y0: The initial observation y₀ that we condition on.
         u_init: An initial control sequence, typically U ~ N(0, σ_L²).
-        score_fn: A (possibly stochastic) score estimate function ŝ(x₀, U, σ).
+        score_fn: A (possibly stochastic) score estimate function ŝ(y₀, U, σ).
         rng: The random number generator key.
         noise_range: The range of noise levels to sample from. If None, sample
             from L to 0. This option is useful for dataset generation, where we
@@ -117,12 +117,12 @@ def annealed_langevin_sample(
 
         # Langevin dynamics based on the estimated score
         z = jax.random.normal(z_rng, U.shape)
-        s = score_fn(x0, U, sigma, score_rng)
+        s = score_fn(y0, U, sigma, score_rng)
         U_new = U + eps * s + beta * jnp.sqrt(2 * eps) * z
 
         # Record training data
         data = DiffusionDataset(
-            x0=x0,
+            y0=y0,
             U=U,
             s=s,
             k=jnp.array([k]),
@@ -175,7 +175,7 @@ def sample_dataset(
         A subset of the dataset at the given noise level.
     """
     assert dataset.k.shape == (
-        dataset.x0.shape[0],
+        dataset.y0.shape[0],
         1,
     ), "dataset should be flattened"
 
@@ -185,7 +185,7 @@ def sample_dataset(
     idxs = idxs[:num_samples]
 
     return DiffusionDataset(
-        x0=dataset.x0[idxs],
+        y0=dataset.y0[idxs],
         U=dataset.U[idxs],
         s=dataset.s[idxs],
         k=dataset.k[idxs],
@@ -213,14 +213,14 @@ class HDF5DiffusionDataset:
         # conversion to jnp arrays is super slow when done directly from the
         # HDF5 file, so we load everything into CPU memory first and only move
         # to GPU when the data is accessed with __getitem__.
-        self.x0 = np.array(file["x0"], dtype=jnp.float32)
+        self.y0 = np.array(file["y0"], dtype=jnp.float32)
         self.U = np.array(file["U"], dtype=jnp.float32)
         self.s = np.array(file["s"], dtype=jnp.float32)
         self.sigma = np.array(file["sigma"], dtype=jnp.float32)
         self.k = np.array(file["k"], dtype=jnp.int32)
 
         # Size checks
-        self.num_data_points = self.x0.shape[0]
+        self.num_data_points = self.y0.shape[0]
         assert self.U.shape[0] == self.num_data_points
         assert self.s.shape[0] == self.num_data_points
         assert self.sigma.shape[0] == self.num_data_points
@@ -246,7 +246,7 @@ class HDF5DiffusionDataset:
             A jax dataset object containing the data at the given indices.
         """
         return DiffusionDataset(
-            x0=jnp.asarray(self.x0[idx], dtype=jnp.float32),
+            y0=jnp.asarray(self.y0[idx], dtype=jnp.float32),
             U=jnp.asarray(self.U[idx], dtype=jnp.float32),
             s=jnp.asarray(self.s[idx], dtype=jnp.float32),
             sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),

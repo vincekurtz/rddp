@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from rddp.architectures import DiffusionPolicyMLP
+from rddp.architectures import ScoreMLP
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.gradient_descent import solve as solve_gd
 from rddp.tasks.double_integrator import DoubleIntegratorProblem
@@ -58,8 +58,6 @@ def generate_dataset(plot: bool = True) -> None:
     generator.generate_and_save(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
-    # TODO: make plots
-
 
 def fit_score_model() -> None:
     """Fit a simple score model to the generated data."""
@@ -77,7 +75,7 @@ def fit_score_model() -> None:
         epochs=50,
         learning_rate=1e-3,
     )
-    net = DiffusionPolicyMLP(layer_sizes=(128,) * 3)
+    net = ScoreMLP(layer_sizes=(128,) * 3)
 
     # Train the score network
     st = time.time()
@@ -121,15 +119,16 @@ def deploy_trained_model(
             guess_rng, (prob.num_steps - 1, 1)
         )
 
-        # Set the initial state
+        # Set the initial state and observation
         rng, state_rng = jax.random.split(rng)
         x0 = prob.sample_initial_state(state_rng)
+        y0 = prob.sys.g(x0)
 
         # Do annealed langevin sampling
         rng, langevin_rng = jax.random.split(rng)
         U, data = annealed_langevin_sample(
             options=options,
-            x0=x0,
+            y0=y0,
             u_init=U_guess,
             score_fn=lambda x, u, sigma, rng: net.apply(
                 params, x, u, jnp.array([sigma])
@@ -145,7 +144,7 @@ def deploy_trained_model(
     opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
     Us, data = jax.vmap(optimize_control_tape)(opt_rng)
-    x0s = data.x0[:, -1, -1, :]  # sample, noise step, time step, dim
+    x0s = data.y0[:, -1, -1, :]  # sample, noise step, time step, dim
     print(f"Sample generation took {time.time() - st:.2f} seconds")
     Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
     costs = jax.vmap(prob.total_cost)(Us, x0s)
@@ -160,7 +159,7 @@ def deploy_trained_model(
 
     # Animate the trajectory generation process
     if animate:
-        x0 = data.x0[:, :, -1, :]  # take the last sample at each noise level
+        x0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
         U = data.U[:, :, -1, :]
         sigma = data.sigma[:, :, -1]
         Xs = jax.vmap(jax.vmap(prob.sys.rollout))(U, x0)
@@ -201,7 +200,7 @@ if __name__ == "__main__":
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
-        deploy_trained_model(plot=False, animate=True)
+        deploy_trained_model(plot=True, animate=True)
     else:
         print(usage)
         sys.exit(1)

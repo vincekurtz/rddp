@@ -18,7 +18,7 @@ def test_annealed_langevin_sample() -> None:
         return jnp.sum(jnp.square(u - u_nom))
 
     def score_fn(
-        x: jnp.ndarray, u: jnp.ndarray, sigma: float, rng: jax.random.PRNGKey
+        y: jnp.ndarray, u: jnp.ndarray, sigma: float, rng: jax.random.PRNGKey
     ) -> jnp.ndarray:
         """A noised score function estimate based on the MPPI update rule."""
         rng, sample_rng = jax.random.split(rng)
@@ -43,14 +43,14 @@ def test_annealed_langevin_sample() -> None:
     rng, langevin_rng = jax.random.split(rng)
     U, data = annealed_langevin_sample(
         options=options,
-        x0=jnp.zeros(3),  # unused in this example
+        y0=jnp.zeros(3),  # unused in this example
         u_init=jnp.zeros(2),
         score_fn=score_fn,
         rng=langevin_rng,
     )
 
     assert isinstance(data, DiffusionDataset)
-    assert data.x0.shape == (options.num_noise_levels, options.num_steps, 3)
+    assert data.y0.shape == (options.num_noise_levels, options.num_steps, 3)
     assert data.U.shape == (options.num_noise_levels, options.num_steps, 2)
     assert data.s.shape == data.U.shape
     assert data.sigma.shape == (options.num_noise_levels, options.num_steps, 1)
@@ -64,7 +64,7 @@ def test_annealed_langevin_sample() -> None:
     options = options.replace(noise_injection_level=0.0)
     U, data = annealed_langevin_sample(
         options=options,
-        x0=jnp.zeros(3),
+        y0=jnp.zeros(3),
         u_init=jnp.zeros(2),
         score_fn=score_fn,
         rng=langevin_rng,
@@ -77,7 +77,7 @@ def test_annealed_langevin_sample() -> None:
     # Check that we can just do a subset of the steps.
     U, data = annealed_langevin_sample(
         options=options,
-        x0=jnp.zeros(3),
+        y0=jnp.zeros(3),
         u_init=jnp.zeros(2),
         score_fn=score_fn,
         rng=langevin_rng,

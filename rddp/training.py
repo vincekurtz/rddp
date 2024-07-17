@@ -20,8 +20,8 @@ Params = Any
 class TrainingOptions:
     """Options for training a score network.
 
-    The score network s_θ(x₀, U, σ) is trained to approximate the conditional
-    noised score estimate ∇ log pₖ(U | x₀).
+    The score network s_θ(y₀, U, σ) is trained to approximate the conditional
+    noised score estimate ∇ log pₖ(U | y₀).
 
     Attributes:
         batch_size: The batch size for training.
@@ -39,7 +39,7 @@ class TrainingOptions:
 
 def create_train_state(
     network: nn.Module,
-    state_shape: Tuple,
+    obs_shape: Tuple,
     action_shape: Tuple,
     options: TrainingOptions,
     rng: jax.random.PRNGKey,
@@ -48,7 +48,7 @@ def create_train_state(
 
     Args:
         network: The score network architecture.
-        state_shape: The shape of the state x₀.
+        obs_shape: The shape of the observation y₀.
         action_shape: The shape of the control sequence U.
         options: The training options.
         rng: The random number generator.
@@ -58,7 +58,7 @@ def create_train_state(
     """
     params = network.init(
         rng,
-        jnp.zeros((1, *state_shape)),  # x0
+        jnp.zeros((1, *obs_shape)),  # y0
         jnp.zeros((1, *action_shape)),  # U
         jnp.zeros((1, 1)),  # sigma
     )
@@ -75,7 +75,7 @@ def apply_model(
 
     Args:
         state: The training state, including the network and parameters.
-        batch: The batch of training data (x0, U, sigma, s).
+        batch: The batch of training data (y0, U, sigma, s).
 
     Returns:
         The training loss and parameter gradients.
@@ -83,7 +83,7 @@ def apply_model(
 
     def loss_fn(params: Params) -> jnp.ndarray:
         """Compute the loss for a batch of data points."""
-        s = state.apply_fn(params, batch.x0, batch.U, batch.sigma)
+        s = state.apply_fn(params, batch.y0, batch.U, batch.sigma)
         err = jnp.square(s - batch.s)
 
         # Weigh the error by the noise level, as recommended by Song et al.
@@ -126,7 +126,7 @@ def train_superbatch(
     Returns:
         The updated training state and the latest training loss
     """
-    superbatch_size = len(dataset.x0)
+    superbatch_size = len(dataset.y0)
     num_batches = superbatch_size // options.batch_size
 
     def scan_fn(carry: Tuple[TrainState, jnp.ndarray], batch: int):
@@ -199,9 +199,9 @@ def train(
 
     # Initialize the training state
     rng, init_rng = jax.random.split(rng)
-    nx = h5_dataset.x0.shape[-1:]  # TODO: support more generic shapes
+    ny = h5_dataset.y0.shape[-1:]  # TODO: support more generic shapes
     nu = h5_dataset.U.shape[-2:]
-    train_state = create_train_state(network, nx, nu, options, init_rng)
+    train_state = create_train_state(network, ny, nu, options, init_rng)
 
     # Load the full dataset into GPU memory if we can. Otherwise we will load
     # superbatches one at a time in each epoch.

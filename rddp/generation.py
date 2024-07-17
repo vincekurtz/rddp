@@ -40,11 +40,11 @@ class DatasetGenerator:
     """Generate a diffusion policy dataset for score function learning.
 
     The dataset consists of tuples
-        (x₀, U, ŝ, k, σₖ),
+        (y₀, U, ŝ, k, σₖ),
     where
-        x₀ is the initial state,
+        y₀ is the initial observation,
         U is the control sequence U = [u₀, u₁, ..., u_T₋₁],
-        ŝ is the noised score estimate ŝ = ∇ log pₖ(U | x₀),
+        ŝ is the noised score estimate ŝ = ∇ log pₖ(U | y₀),
         and k is noise level index.
     """
 
@@ -57,7 +57,7 @@ class DatasetGenerator:
         """Initialize the dataset generator.
 
         Args:
-            prob: The optimal control problem defining the cost J(U | x₀).
+            prob: The optimal control problem defining the cost J(U | y₀).
             langevin_options: Sampling (e.g., temperature) settings.
             datagen_options: Dataset generation (e.g., num rollouts) settings.
         """
@@ -82,11 +82,11 @@ class DatasetGenerator:
 
         # Initialize the hdf5 file to save the dataset to
         self.h5_path = save_path / "dataset.h5"
-        x_shape = prob.sys.state_shape
+        y_shape = prob.sys.observation_shape
         U_shape = (prob.num_steps - 1, *prob.sys.action_shape)
         with h5py.File(self.h5_path, "w") as f:
             f.create_dataset(
-                "x0", (0, *x_shape), maxshape=(None, *x_shape), dtype="float32"
+                "y0", (0, *y_shape), maxshape=(None, *y_shape), dtype="float32"
             )
             f.create_dataset(
                 "U", (0, *U_shape), maxshape=(None, *U_shape), dtype="float32"
@@ -160,20 +160,20 @@ class DatasetGenerator:
             dataset: The (flattened) dataset to save.
         """
         with h5py.File(self.h5_path, "a") as f:
-            x0, U, s, k, sigma = f["x0"], f["U"], f["s"], f["k"], f["sigma"]
-            num_existing_data_points = x0.shape[0]
-            num_new_data_points = dataset.x0.shape[0]
+            y0, U, s, k, sigma = f["y0"], f["U"], f["s"], f["k"], f["sigma"]
+            num_existing_data_points = y0.shape[0]
+            num_new_data_points = dataset.y0.shape[0]
             new_size = num_existing_data_points + num_new_data_points
 
             # Resize datasets to accomodate new data
-            x0.resize(new_size, axis=0)
+            y0.resize(new_size, axis=0)
             U.resize(new_size, axis=0)
             s.resize(new_size, axis=0)
             k.resize(new_size, axis=0)
             sigma.resize(new_size, axis=0)
 
             # Write the new data
-            x0[num_existing_data_points:] = dataset.x0
+            y0[num_existing_data_points:] = dataset.y0
             U[num_existing_data_points:] = dataset.U
             s[num_existing_data_points:] = dataset.s
             k[num_existing_data_points:] = dataset.k
@@ -192,7 +192,7 @@ class DatasetGenerator:
         langevin_sample = jax.vmap(
             lambda x0, u, rng, noise_range: annealed_langevin_sample(
                 self.langevin_options,
-                x0,
+                x0,  # N.B. we assume that p(U | x₀) = p(U | y₀)
                 u,
                 self.estimate_noised_score,
                 rng,
@@ -201,6 +201,7 @@ class DatasetGenerator:
             in_axes=(0, 0, 0, None),
         )
         calc_cost = jax.jit(jax.vmap(self.prob.total_cost))
+        calc_obs = jax.jit(jax.vmap(self.prob.sys.g))
         sigmaL = self.langevin_options.starting_noise_level
 
         # Sample initial states
@@ -240,10 +241,11 @@ class DatasetGenerator:
             )
             U, dataset = langevin_sample(x0, U, langevin_rng, (start_k, end_k))
 
-            # Save the dataset
+            # Flatten the dataset, then transform observations to y = g(x)
             flat_data = jax.tree.map(
                 lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
             )
+            flat_data = flat_data.replace(y0=calc_obs(flat_data.y0))
             self.save_dataset(flat_data)
 
             # Print a quick performance summary
