@@ -20,6 +20,8 @@ def test_pendulum() -> None:
 
     old_theta, old_theta_dot = data.qpos[0], data.qvel[0]
     data = sys.f(data, u)
+    assert data.qpos.shape == (1,)
+    assert data.qvel.shape == (1,)
     new_theta, new_theta_dot = data.qpos[0], data.qvel[0]
 
     assert new_theta != old_theta
@@ -56,6 +58,6 @@ def test_simulation() -> None:
 
 
 if __name__ == "__main__":
-    # test_pendulum()
-    # test_rollout()
+    test_pendulum()
+    test_rollout()
     test_simulation()

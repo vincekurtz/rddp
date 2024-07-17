@@ -11,7 +11,10 @@ class MjxPendulum(MjxDynamicalSystem):
 
     def __init__(self) -> None:
         """Initialize the pendulum system."""
-        super().__init__("rddp/systems/models/pendulum_scene.xml")
+        super().__init__(
+            "rddp/systems/models/pendulum_scene.xml",
+            sim_steps_per_control_step=2,
+        )
 
     @property
     def observation_shape(self) -> Tuple[int, ...]:

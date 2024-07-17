@@ -2,6 +2,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Callable, Tuple
 
+import jax
 import jax.numpy as jnp
 import mujoco
 import mujoco.viewer
@@ -14,7 +15,7 @@ from rddp.systems.base import DynamicalSystem
 class MjxDynamicalSystem(DynamicalSystem, ABC):
     """An generic system based on the MuJoCo MJX physics engine."""
 
-    def __init__(self, mjcf_path: str):
+    def __init__(self, mjcf_path: str, sim_steps_per_control_step: int = 1):
         """Initialize the system.
 
         Note: This class models the state x with an mjx.Data object rather
@@ -22,9 +23,13 @@ class MjxDynamicalSystem(DynamicalSystem, ABC):
 
         Args:
             mjcf_path: The path to the MJCF model definition file.
+            sim_steps_per_control_step: The number of simulation steps to take
+                per control step. This can be used to simulate at a higher
+                frequency than the control frequency.
         """
         self.mj_model = mujoco.MjModel.from_xml_path(mjcf_path)
         self.model = mjx.put_model(self.mj_model)
+        self.sim_steps_per_control_step = sim_steps_per_control_step
 
     def make_data(self) -> mjx.Data:
         """Create a new data object for storing the system state."""
@@ -50,8 +55,12 @@ class MjxDynamicalSystem(DynamicalSystem, ABC):
         Returns:
             The next state xₜ₊₁.
         """
-        data = x.replace(ctrl=u)
-        return mjx.step(self.model, data)
+        x_next, _ = jax.lax.scan(
+            lambda state, _: (mjx.step(self.model, state), None),
+            x.replace(ctrl=u),
+            jnp.arange(self.sim_steps_per_control_step),
+        )
+        return x_next
 
     @abstractmethod
     def g(self, x: mjx.Data) -> jnp.ndarray:
@@ -86,7 +95,7 @@ class MjxDynamicalSystem(DynamicalSystem, ABC):
         mj_data.qvel[:] = x0.qvel
 
         steps = 0
-        dt = self.mj_model.opt.timestep  # TODO: times step per control step
+        dt = self.mj_model.opt.timestep * self.sim_steps_per_control_step
         with mujoco.viewer.launch_passive(self.mj_model, mj_data) as viewer:
             viewer.cam.fixedcamid = fixedcamid
             viewer.cam.type = cam_type
@@ -102,10 +111,10 @@ class MjxDynamicalSystem(DynamicalSystem, ABC):
                 u = policy_fn(y)
 
                 # Apply the policy and step the simulation
-                # TODO: specify num control steps per sim step
                 mj_data.ctrl[:] = np.array(u)
-                mujoco.mj_step(self.mj_model, mj_data)
-                viewer.sync()
+                for _ in range(self.sim_steps_per_control_step):
+                    mujoco.mj_step(self.mj_model, mj_data)
+                    viewer.sync()
 
                 # Try to run in roughly realtime
                 elapsed_time = time.time() - start_time
