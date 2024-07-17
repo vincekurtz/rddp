@@ -43,6 +43,19 @@ def test_rollout() -> None:
     assert all_data.qvel.shape == (10, 1)
 
 
+def test_simulation() -> None:
+    """Test running an interactive simulation of the pendulum."""
+    sys = MjxPendulum()
+    x0 = sys.make_data()
+
+    policy_fn = lambda y: jnp.array([0.0])
+
+    sys.simulate_and_render(
+        x0, policy_fn, num_steps=jnp.inf, fixedcamid=0, cam_type=2
+    )
+
+
 if __name__ == "__main__":
     # test_pendulum()
-    test_rollout()
+    # test_rollout()
+    test_simulation()
