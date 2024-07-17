@@ -201,7 +201,7 @@ class DatasetGenerator:
             in_axes=(0, 0, 0, None),
         )
         calc_cost = jax.jit(jax.vmap(self.prob.total_cost))
-        calc_obs = jax.jit(jax.vmap(self.prob.sys.g))
+        calc_obs = jax.jit(jax.vmap(jax.vmap(jax.vmap(self.prob.sys.g))))
         sigmaL = self.langevin_options.starting_noise_level
 
         # Sample initial states
@@ -241,11 +241,11 @@ class DatasetGenerator:
             )
             U, dataset = langevin_sample(x0, U, langevin_rng, (start_k, end_k))
 
-            # Flatten the dataset, then transform observations to y = g(x)
+            # Transform observations to y = g(x), then flatten the dataset
+            dataset = dataset.replace(y0=calc_obs(dataset.y0))
             flat_data = jax.tree.map(
                 lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
             )
-            flat_data = flat_data.replace(y0=calc_obs(flat_data.y0))
             self.save_dataset(flat_data)
 
             # Print a quick performance summary
