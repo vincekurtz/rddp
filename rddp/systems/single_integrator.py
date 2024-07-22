@@ -37,6 +37,7 @@ class SingleIntegrator(DynamicalSystem):
 
     def f(self, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
         """Forward dynamics function."""
+        u = jnp.clip(u, -1.0, 1.0)
         return x + self.dt * u
 
     def g(self, x: jnp.ndarray) -> jnp.ndarray:

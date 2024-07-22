@@ -105,7 +105,7 @@ def generate_dataset(plot: bool = False) -> None:
     prob = BugTrap(num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
-        starting_noise_level=5.0,
+        starting_noise_level=1.0,
         num_steps=100,
         step_size=0.01,
         noise_injection_level=1.0,
