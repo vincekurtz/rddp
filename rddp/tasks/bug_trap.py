@@ -26,7 +26,7 @@ class BugTrapConfig:
     )
     horizontal_limits: Tuple[float, float] = (-3, 3)
     vertical_limits: Tuple[float, float] = (-3, 3)
-    dynamics: str = "single_integrator"
+    dynamics: str = "unicycle"
 
 
 class BugTrap(OptimalControlProblem):
@@ -110,8 +110,8 @@ class BugTrap(OptimalControlProblem):
             minval=self.config.vertical_limits[0],
             maxval=self.config.vertical_limits[1],
         )
-        px = -1.0
-        py = 0.0
+        # px = -1.0
+        # py = 0.0
         if self.config.dynamics == "unicycle":
             rng, theta_rng = jax.random.split(rng)
             theta = jax.random.uniform(theta_rng, minval=-jnp.pi, maxval=jnp.pi)
