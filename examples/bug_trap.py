@@ -112,9 +112,9 @@ def generate_dataset(plot: bool = False) -> None:
     )
     gen_options = DatasetGenerationOptions(
         temperature=0.1,
-        num_initial_states=1024,
+        num_initial_states=512,
         num_rollouts_per_data_point=128,
-        save_every=50,
+        save_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -152,7 +152,7 @@ def fit_score_model() -> None:
     # Set up the training options and the score network
     training_options = TrainingOptions(
         batch_size=5120,
-        num_superbatches=100,
+        num_superbatches=4,
         epochs=50,
         learning_rate=1e-3,
     )
