@@ -26,7 +26,7 @@ class BugTrapConfig:
     )
     horizontal_limits: Tuple[float, float] = (-3, 3)
     vertical_limits: Tuple[float, float] = (-3, 3)
-    dynamics: str = "unicycle"
+    dynamics: str = "single_integrator"
 
 
 class BugTrap(OptimalControlProblem):
@@ -99,22 +99,10 @@ class BugTrap(OptimalControlProblem):
 
     def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
         """Initial state is fixed."""
-        rng, px_rng, py_rng = jax.random.split(rng, 3)
-        px = jax.random.uniform(
-            px_rng,
-            minval=self.config.horizontal_limits[0],
-            maxval=self.config.horizontal_limits[1],
-        )
-        py = jax.random.uniform(
-            py_rng,
-            minval=self.config.vertical_limits[0],
-            maxval=self.config.vertical_limits[1],
-        )
-        # px = -1.0
-        # py = 0.0
+        px = -1.0
+        py = 0.0
+        theta = 0.0
         if self.config.dynamics == "unicycle":
-            rng, theta_rng = jax.random.split(rng)
-            theta = jax.random.uniform(theta_rng, minval=-jnp.pi, maxval=jnp.pi)
             return jnp.array([px, py, theta])
         elif self.config.dynamics == "single_integrator":
             return jnp.array([px, py])
