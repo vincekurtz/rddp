@@ -132,6 +132,9 @@ class DatasetGenerator:
         M = self.datagen_options.num_rollouts_per_data_point
         lmbda = self.datagen_options.temperature
 
+        # DEBUG
+        sigma = 0.01
+
         # Sample control tapes Ũʲ ~ 𝒩(U,σ²)
         rng, ctrl_rng = jax.random.split(rng)
         U_noised = controls + sigma * jax.random.normal(

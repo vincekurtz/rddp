@@ -77,9 +77,18 @@ def estimate_noised_score(
     return s_hat / sigma**2
 
 
+def estimate_noised_score_ars(
+    x: jnp.ndarray, num_samples: int, sigma: float, rng: jax.random.PRNGKey
+) -> jnp.ndarray:
+    """Estimate the noised score using ARS-style sampling."""
+    x_i = jax.random.normal(rng, (num_samples,)) * sigma + x
+    J = energy(x)
+    J_i = energy(x_i)
+    return - jnp.sum((J_i - J) * (x_i - x)) / (num_samples * sigma**2)
+
 if __name__ == "__main__":
     rng = jax.random.PRNGKey(0)
-    x = jnp.linspace(-3, 3, 1000)
+    x = jnp.linspace(-8, 8, 1000)
 
     fig, ax = plt.subplots(5, 1, sharex=True, figsize=(10, 15))
 
@@ -124,21 +133,24 @@ if __name__ == "__main__":
     ax[3].set_ylabel("s(x)")
     ax[3].legend()
 
-    ax[4].set_title("Denoising Score Matching Estimate")
-    ax[4].plot(x, true_score(x), label="True score")
+    ax[4].set_title("ARS Score Estimate")
+    ax[4].plot(x, -energy_gradient(x), label="True gradient")
 
-    sigma = 0.5
-    x_data = samples  # samples from the target distribution
+    vmap_ars_score = jax.vmap(
+        estimate_noised_score_ars, in_axes=(0, None, None, 0)
+    )
+
+    sigma = 0.01
     rng, sample_rng = jax.random.split(rng)
-    x_tilde = sigma * jax.random.normal(sample_rng, x_data.shape) - x_data
-    s_hat = (x_data - x_tilde) / sigma
-    ax[4].scatter(x_tilde, s_hat, alpha=0.5, label=f"Estimate, sigma={sigma}")
+    sample_rng = jax.random.split(rng, x.shape[0])
+    s_hat = vmap_ars_score(x, 50, sigma, sample_rng)
+    ax[4].scatter(x, s_hat, alpha=0.5, label=f"Estimated, sigma={sigma}")
 
     sigma = 0.1
     rng, sample_rng = jax.random.split(rng)
-    x_tilde = sigma * jax.random.normal(sample_rng, x_data.shape) - x_data
-    s_hat = (x_data - x_tilde) / sigma
-    ax[4].scatter(x_tilde, s_hat, alpha=0.5, label=f"Estimate, sigma={sigma}")
+    sample_rng = jax.random.split(rng, x.shape[0])
+    s_hat = vmap_ars_score(x, 50, sigma, sample_rng)
+    ax[4].scatter(x, s_hat, alpha=0.5, label=f"Estimated, sigma={sigma}")
 
     ax[4].set_xlabel("x")
     ax[4].set_ylabel("s(x)")
