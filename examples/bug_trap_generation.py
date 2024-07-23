@@ -4,6 +4,8 @@
 #
 ##
 
+from typing import Tuple
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -78,7 +80,7 @@ def visualize_dataset(
     plt.show()
 
 
-def gradient_descent() -> DiffusionDataset:
+def gradient_descent() -> None:
     """Generate with simple gradient descent from random initial conditions."""
     rng = jax.random.PRNGKey(0)
 
@@ -124,5 +126,62 @@ def gradient_descent() -> DiffusionDataset:
     visualize_dataset(dataset, prob, num_iterations)
 
 
+def simulated_annealing() -> None:
+    """Generate with simulated annealing."""
+    rng = jax.random.PRNGKey(0)
+
+    # Parameters
+    horizon = 20
+    num_samples = 128
+    num_iterations = 5000
+    starting_noise_level = 1.0
+    learning_rate = 0.001
+    lambda_start = 1.0
+    lambda_end = 0.0001
+
+    # Problem setup
+    prob = BugTrap(num_steps=horizon)
+    x0 = prob.sample_initial_state(rng)
+    grad = lambda u: get_gradient(prob, u, x0)
+    vmap_grad = jax.vmap(grad)
+
+    # Sample initial control sequences from a normal distribution
+    rng, noise_rng = jax.random.split(rng)
+    noise_shape = (num_samples, horizon, *prob.sys.action_shape)
+    U = starting_noise_level * jax.random.normal(noise_rng, shape=noise_shape)
+
+    def scan_fn(carry: Tuple, k: int):
+        U, rng = carry
+
+        rng, noise_rng = jax.random.split(rng)
+        z = starting_noise_level * jax.random.normal(noise_rng, U.shape)
+        lmbda = lambda_end + (lambda_start - lambda_end) * k / num_iterations
+
+        s = vmap_grad(U)
+        U = U - learning_rate * s + jnp.sqrt(2 * learning_rate * lmbda) * z
+        dataset = DiffusionDataset(
+            y0=jnp.tile(x0, (num_samples, 1)),
+            U=U,
+            s=s,
+            k=jnp.tile(jnp.array([k]), (num_samples, 1)),
+            sigma=jnp.tile(jnp.array([lmbda]), (num_samples, 1)),
+        )
+        return (U, rng), dataset
+
+    print("Generating dataset...")
+    (U, _), dataset = jax.lax.scan(
+        scan_fn, (U, rng), jnp.arange(num_iterations, -1, -1)
+    )
+
+    # Flatten the dataset
+    print("Flattening dataset...")
+    dataset = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), dataset)
+
+    # Visualize the dataset
+    print("Visualizing dataset...")
+    visualize_dataset(dataset, prob, num_iterations)
+
+
 if __name__ == "__main__":
-    dataset = gradient_descent()
+    # gradient_descent()
+    simulated_annealing()

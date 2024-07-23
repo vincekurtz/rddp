@@ -26,7 +26,7 @@ class BugTrapConfig:
     )
     horizontal_limits: Tuple[float, float] = (-3, 3)
     vertical_limits: Tuple[float, float] = (-3, 3)
-    dynamics: str = "single_integrator"
+    dynamics: str = "unicycle"
 
 
 class BugTrap(OptimalControlProblem):
