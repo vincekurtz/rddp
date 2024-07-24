@@ -30,7 +30,7 @@ def test_score_estimate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.1,
+        starting_temperature=1.0,
         num_initial_states=1,
         num_rollouts_per_data_point=10,
         save_every=1,
@@ -79,7 +79,7 @@ def test_save_dataset() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.1,
+        starting_temperature=1.0,
         num_initial_states=1,
         num_rollouts_per_data_point=10,
         save_every=1,
@@ -145,7 +145,7 @@ def test_generate() -> None:
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.01,
+        starting_temperature=1.0,
         num_initial_states=5,
         num_rollouts_per_data_point=16,
         save_every=50,
