@@ -48,6 +48,8 @@ class AnnealedLangevinOptions:
         noise_injection_level: The noise injection level for each Langevin step.
             A value of 1.0 corresponds to the standard Langevin dynamics, while
             a value of 0.0 corresponds to pure gradient descent.
+        noise_decay_rate: The rate β at which the noise level decays, σₖ = σ_L
+            exp(-βt), where t = (L - k) / L.
     """
 
     num_noise_levels: int
@@ -55,6 +57,7 @@ class AnnealedLangevinOptions:
     num_steps: int
     step_size: float
     noise_injection_level: float = 1.0
+    noise_decay_rate: float = 4.0
 
 
 def annealed_langevin_sample(
@@ -137,7 +140,7 @@ def annealed_langevin_sample(
 
         # Set the noise level σₖ
         t = (L - k) / L
-        sigma = sigmaL * jnp.exp(-4 * t)
+        sigma = sigmaL * jnp.exp(-options.noise_decay_rate * t)
 
         # Run Langevin dynamics for N steps, recording score estimates
         # along the way

@@ -111,8 +111,8 @@ def generate_dataset(plot: bool = False) -> None:
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.1,
-        num_initial_states=512,
+        starting_temperature=1.0,
+        num_initial_states=256,
         num_rollouts_per_data_point=128,
         save_every=100,
         save_path=save_path,
@@ -151,12 +151,12 @@ def fit_score_model() -> None:
 
     # Set up the training options and the score network
     training_options = TrainingOptions(
-        batch_size=5120,
-        num_superbatches=4,
+        batch_size=10240,
+        num_superbatches=1,
         epochs=50,
         learning_rate=1e-3,
     )
-    net = ScoreMLP(layer_sizes=(128,) * 3)
+    net = ScoreMLP(layer_sizes=(256,) * 3)
 
     # Train the score network
     st = time.time()

@@ -46,7 +46,7 @@ def test_training() -> None:
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.001,
+        starting_temperature=1.0,
         num_initial_states=256,
         num_rollouts_per_data_point=8,
         save_every=100,

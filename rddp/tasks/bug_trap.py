@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from flax.struct import dataclass, field
 
-from rddp.systems.single_integrator import SingleIntegrator
 from rddp.systems.unicycle import Unicycle
 from rddp.tasks.base import OptimalControlProblem
 
@@ -15,10 +14,9 @@ class BugTrapConfig:
     """Configuration for the bug_trap problem.
 
     Attributes:
-        target_position: The position of the target.
+        target_position: The goal position for the robot.
         horizontal_limits: The maximum x position of the robot.
         vertical_limits: The maximum y position of the robot.
-        dynamics: The robot dynamics (unicycle or single_integrator).
     """
 
     target_position: jnp.ndarray = field(
@@ -26,7 +24,6 @@ class BugTrapConfig:
     )
     horizontal_limits: Tuple[float, float] = (-3, 3)
     vertical_limits: Tuple[float, float] = (-3, 3)
-    dynamics: str = "unicycle"
 
 
 class BugTrap(OptimalControlProblem):
@@ -43,17 +40,12 @@ class BugTrap(OptimalControlProblem):
             num_steps: The number of time steps T.
             config: The configuration of the bug_trap problem.
         """
+        sys = Unicycle(dt=0.3)
+        super().__init__(sys, num_steps)
+
         if config is None:
             config = BugTrapConfig()
         self.config = config
-
-        if config.dynamics == "unicycle":
-            sys = Unicycle(dt=0.3)
-        elif config.dynamics == "single_integrator":
-            sys = SingleIntegrator(dt=0.3)
-        else:
-            raise ValueError(f"Unknown dynamics type: {config.dynamics}")
-        super().__init__(sys, num_steps)
 
         # Set obstacle positions to define the maze
         self.obs_positions = jnp.array(
@@ -99,13 +91,7 @@ class BugTrap(OptimalControlProblem):
 
     def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
         """Initial state is fixed."""
-        px = -1.0
-        py = 0.0
-        theta = 0.0
-        if self.config.dynamics == "unicycle":
-            return jnp.array([px, py, theta])
-        elif self.config.dynamics == "single_integrator":
-            return jnp.array([px, py])
+        return jnp.array([-1.0, 0.0, 0.0])
 
     def plot_scenario(self) -> None:
         """Make a matplotlib visualization of the reach-avoid scenario."""

@@ -44,7 +44,7 @@ def generate_dataset(plot: bool = True) -> None:
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
-        temperature=0.01,
+        starting_temperature=1.0,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
         save_every=100,
