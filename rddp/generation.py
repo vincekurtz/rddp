@@ -21,7 +21,7 @@ class DatasetGenerationOptions:
     """Parameters for generating a diffusion policy dataset.
 
     Attributes:
-        temperature: The temperature λ of the target distribution.
+        starting_temperature: The initial temperature λ.
         num_initial_states: The number of initial states x₀ to sample.
         num_rollouts_per_data_point: The number of rollouts used to estimate
                                      each score, M.
@@ -29,7 +29,7 @@ class DatasetGenerationOptions:
         save_path: The directory to save the generated dataset to.
     """
 
-    temperature: float
+    starting_temperature: float
     num_initial_states: int
     num_rollouts_per_data_point: int
     save_every: int
@@ -120,6 +120,8 @@ class DatasetGenerator:
 
         where the expectation is under Ũ ~ 𝒩(U,σₖ²).
 
+        Note that we anneal the temperature λ along with the noise level σₖ.
+
         Args:
             x0: The initial state x₀.
             controls: The control sequence U = [u₀, u₁, ..., u_T₋₁].
@@ -130,7 +132,7 @@ class DatasetGenerator:
             The noised score estimate ŝ = σ² ∇ log pₖ(U | x₀).
         """
         M = self.datagen_options.num_rollouts_per_data_point
-        lmbda = self.datagen_options.temperature
+        lmbda = self.datagen_options.starting_temperature * sigma**2
 
         # Sample control tapes Ũʲ ~ 𝒩(U,σ²)
         rng, ctrl_rng = jax.random.split(rng)
