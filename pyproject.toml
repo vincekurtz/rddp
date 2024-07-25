@@ -22,6 +22,7 @@ dependencies = [
     "pre-commit>=3.7.1",
     "matplotlib>=3.8.3",
     "h5py>=3.11.0",
+    "brax>=0.10.5",
 ]
 
 [tool.ruff]
