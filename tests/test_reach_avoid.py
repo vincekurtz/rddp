@@ -1,47 +1,36 @@
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+from brax.envs.base import State
 
-from rddp.tasks.reach_avoid import ReachAvoid
-
-
-def test_cost() -> None:
-    """Test computing the total cost of the reach-avoid problem."""
-    prob = ReachAvoid(num_steps=10)
-    x0 = jnp.array([-1.0, -1.0])
-    control_tape = [
-        jnp.array([jnp.sin(t), jnp.cos(0.1 * t)]) for t in range(10)
-    ]
-    control_tape = jnp.array(control_tape)
-
-    # Manually compute the total cost.
-    cost = 0.0
-    x = x0
-    for t in range(10):
-        u = control_tape[t]
-        cost += prob.running_cost(x, u, t)
-        x = x + u
-    cost += prob.terminal_cost(x)
-
-    # Compute the total cost using the problem's method.
-    cost2 = prob.total_cost(control_tape, x0)
-    assert jnp.isclose(cost, cost2)
+from rddp.envs.reach_avoid import ReachAvoidEnv
 
 
 def test_plot() -> None:
     """Test plotting the reach-avoid scenario."""
-    prob = ReachAvoid(num_steps=10)
-    prob.plot_scenario()
+    env = ReachAvoidEnv()
+    env.plot_scenario()
+    if __name__ == "__main__":
+        # Only show the plot if this script is run directly, not in pytest.
+        plt.show()
 
 
-def test_sample_initial_state() -> None:
-    """Test sampling the initial state of the reach-avoid problem."""
+def test_step_reset() -> None:
+    """Test the basic step and reset functions."""
     rng = jax.random.PRNGKey(0)
-    prob = ReachAvoid(num_steps=10)
-    x0 = prob.sample_initial_state(rng)
-    assert x0.shape == (2,)
+    env = ReachAvoidEnv()
+
+    rng, reset_rng = jax.random.split(rng)
+    state = env.reset(reset_rng)
+    assert isinstance(state, State)
+    start_pos = state.pipeline_state.q
+    assert start_pos.shape == (2,)
+
+    vel = jnp.array([0.8, 0.3])
+    state = env.step(state, vel)
+    assert jnp.allclose(state.pipeline_state.q - start_pos, vel)
 
 
 if __name__ == "__main__":
-    test_cost()
-    test_sample_initial_state()
     test_plot()
+    test_step_reset()
