@@ -43,12 +43,14 @@ class BugTrapEnv(PipelineEnv):
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Forward dynamics, observation, and reward."""
+        action = jnp.clip(action, -1.0, 1.0)
+
         # Dyanamics
         q = state.pipeline_state.q
         v, w = action
         theta = q[2]
         qdot = jnp.array([v * jnp.cos(theta), v * jnp.sin(theta), w])
-        q_new = q + 0.1 * qdot
+        q_new = q + 1.0 * qdot
         new_pipeline_state = state.pipeline_state.replace(q=q_new)
 
         # Observation
@@ -96,3 +98,13 @@ class BugTrapEnv(PipelineEnv):
 
         plt.xlim(*self.horizontal_limits)
         plt.ylim(*self.vertical_limits)
+
+    @property
+    def action_size(self) -> int:
+        """The size of the action space."""
+        return 2
+
+    @property
+    def observation_size(self) -> int:
+        """The size of the observation space."""
+        return 3
