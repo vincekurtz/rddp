@@ -137,7 +137,7 @@ def test_save_dataset() -> None:
 def test_generate() -> None:
     """Test the dataset generation process."""
     # Create a temporary directory
-    local_dir = Path("_test_save_dataset")
+    local_dir = Path("_test_generate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a generator
@@ -180,5 +180,5 @@ def test_generate() -> None:
 
 if __name__ == "__main__":
     test_score_estimate()
-    # test_save_dataset()
-    # test_generate()
+    test_save_dataset()
+    test_generate()

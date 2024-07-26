@@ -191,7 +191,7 @@ class DatasetGenerator:
         start_time = datetime.now()
 
         # Some helper functions
-        sample_initial_state = jax.jit(jax.vmap(self.prob.sample_initial_state))
+        sample_initial_state = jax.jit(jax.vmap(self.prob.env.reset))
         langevin_sample = jax.vmap(
             lambda x0, u, rng, noise_range: annealed_langevin_sample(
                 self.langevin_options,
@@ -203,8 +203,7 @@ class DatasetGenerator:
             ),
             in_axes=(0, 0, 0, None),
         )
-        calc_cost = jax.jit(jax.vmap(self.prob.total_cost))
-        calc_obs = jax.jit(jax.vmap(self.prob.sys.g))
+        rollout = jax.jit(jax.vmap(self.prob.rollout))
         sigmaL = self.langevin_options.starting_noise_level
 
         # Sample initial states
@@ -221,11 +220,11 @@ class DatasetGenerator:
             (
                 self.datagen_options.num_initial_states,
                 self.prob.num_steps - 1,
-                *self.prob.sys.action_shape,
+                self.prob.env.action_size,
             ),
         )
 
-        costs = calc_cost(U, x0)
+        costs, _ = rollout(x0, U)
         print(
             f"σₖ = {sigmaL:.4f}, "
             f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}, "
@@ -244,15 +243,15 @@ class DatasetGenerator:
             )
             U, dataset = langevin_sample(x0, U, langevin_rng, (start_k, end_k))
 
-            # Flatten the dataset, then transform observations to y = g(x)
+            # Record only the observations y = g(x0) and flatten the dataset
+            dataset = dataset.replace(y0=dataset.y0.obs)
             flat_data = jax.tree.map(
                 lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
             )
-            flat_data = flat_data.replace(y0=calc_obs(flat_data.y0))
             self.save_dataset(flat_data)
 
             # Print a quick performance summary
-            costs = calc_cost(U, x0)
+            costs, _ = rollout(x0, U)
             sigma = dataset.sigma[0, -1, 0, 0]  # state, noise level, step, dim
             print(
                 f"σₖ = {sigma:.4f}, "
