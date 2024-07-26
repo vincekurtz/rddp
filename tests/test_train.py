@@ -2,31 +2,13 @@ from pathlib import Path
 
 import h5py
 import jax
-import jax.numpy as jnp
 
 from rddp.architectures import ScoreMLP
+from rddp.envs.reach_avoid import ReachAvoidEnv
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
-from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.ocp import OptimalControlProblem
 from rddp.training import TrainingOptions, train
 from rddp.utils import AnnealedLangevinOptions, HDF5DiffusionDataset
-
-
-class ReachAvoidFixedX0(ReachAvoid):
-    """A reach-avoid problem with a fixed initial state."""
-
-    def __init__(self, num_steps: int, start_state: jnp.ndarray):
-        """Initialize the reach-avoid problem.
-
-        Args:
-            num_steps: The number of time steps T.
-            start_state: The initial state x0.
-        """
-        super().__init__(num_steps)
-        self.x0 = start_state
-
-    def sample_initial_state(self, rng: jax.random.PRNGKey) -> jnp.ndarray:
-        """Sample the initial state x₀."""
-        return self.x0
 
 
 def test_training() -> None:
@@ -38,7 +20,7 @@ def test_training() -> None:
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate a training dataset
-    prob = ReachAvoidFixedX0(num_steps=5, start_state=jnp.array([0.1, -1.5]))
+    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=5)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=100,
         starting_noise_level=0.5,
