@@ -2,18 +2,17 @@ import pickle
 import sys
 import time
 
-from brax.envs.base import State
-
 import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from brax.envs.base import State
 from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import ScoreMLP
+from rddp.envs.reach_avoid import ReachAvoidEnv
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.gradient_descent import solve as solve_gd
-from rddp.envs.reach_avoid import ReachAvoidEnv
 from rddp.ocp import OptimalControlProblem
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
@@ -34,7 +33,7 @@ def solve_with_gradient_descent(
     """Solve the optimal control problem using simple gradient descent."""
     prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=HORIZON)
     x0 = prob.env.reset(jax.random.PRNGKey(0))
-    x0 = x0.tree_replace({'pipeline_state.q': jnp.array([0.1,-1.5])})
+    x0 = x0.tree_replace({"pipeline_state.q": jnp.array([0.1, -1.5])})
     u_guess = u_guess * jnp.ones((prob.num_steps - 1, prob.env.action_size))
 
     U, _, _ = solve_gd(prob, x0, u_guess)
@@ -49,7 +48,9 @@ def solve_with_gradient_descent(
 
 
 def visualize_dataset(
-    dataset: DiffusionDataset, prob: OptimalControlProblem, num_noise_levels: int
+    dataset: DiffusionDataset,
+    prob: OptimalControlProblem,
+    num_noise_levels: int,
 ) -> None:
     """Make some plots of the generated dataset.
 
@@ -62,8 +63,8 @@ def visualize_dataset(
     x0 = prob.env.reset(rng)
 
     def get_initial_state(pos: jnp.ndarray) -> State:
-        return x0.tree_replace({'pipeline_state.q': pos})
-    
+        return x0.tree_replace({"pipeline_state.q": pos})
+
     rollout_fn = jax.jit(jax.vmap(prob.rollout))
 
     noise_levels = [
@@ -95,7 +96,6 @@ def visualize_dataset(
 
     # Plot costs at each iteration
     plt.figure()
-    jit_cost = jax.jit(jax.vmap(prob.rollout))
     for k in range(num_noise_levels):
         iter = num_noise_levels - k
 
@@ -192,12 +192,17 @@ def fit_score_model() -> None:
     print(f"Saved trained model to {fname}")
 
 
-def deploy_trained_model(
-    plot: bool = True, animate: bool = False, save_path: str = None
-) -> None:
+def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = ReachAvoid(num_steps=HORIZON)
+    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=HORIZON)
+
+    def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
+        """Do a rollout from an observation, and return observations."""
+        x0 = prob.env.reset(rng)
+        x0 = x0.tree_replace({"pipeline_state.q": y0, "obs": y0})
+        cost, X = prob.rollout(x0, u)
+        return cost, X.obs
 
     # Load the trained score network
     with open("/tmp/reach_avoid_score_model.pkl", "rb") as f:
@@ -219,13 +224,13 @@ def deploy_trained_model(
 
         # Set the initial state
         rng, state_rng = jax.random.split(rng)
-        x0 = prob.sample_initial_state(state_rng)
+        x0 = prob.env.reset(state_rng)
 
         # Do annealed langevin sampling
         rng, langevin_rng = jax.random.split(rng)
         U, data = annealed_langevin_sample(
             options=options,
-            y0=prob.sys.g(x0),
+            y0=x0.obs,
             u_init=U_guess,
             score_fn=lambda y, u, sigma, rng: net.apply(
                 params, y, u, jnp.array([sigma])
@@ -240,29 +245,28 @@ def deploy_trained_model(
     rng, opt_rng = jax.random.split(rng)
     opt_rng = jax.random.split(opt_rng, num_samples)
     st = time.time()
-    Us, data = jax.vmap(optimize_control_tape)(opt_rng)
-    x0s = data.y0[:, -1, -1, :]  # sample, noise step, time step, dim
+    _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
-    Xs = jax.vmap(prob.sys.rollout)(Us, x0s)
-    costs = jax.vmap(prob.total_cost)(Us, x0s)
-    print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
+
+    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
+    U = data.U[:, :, -1, :]
+    sigma = data.sigma[:, :, -1]
+    costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
+    print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 
     # Plot the sampled trajectories
     if plot:
-        prob.plot_scenario()
+        prob.env.plot_scenario()
         for i in range(num_samples):
-            plt.plot(Xs[i, :, 0], Xs[i, :, 1], "o-", color="blue", alpha=0.5)
+            plt.plot(
+                Xs[i, -1, :, 0], Xs[i, -1, :, 1], "o-", color="blue", alpha=0.5
+            )
         plt.show()
 
     # Animate the trajectory generation process
     if animate:
-        x0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-        U = data.U[:, :, -1, :]
-        sigma = data.sigma[:, :, -1]
-        Xs = jax.vmap(jax.vmap(prob.sys.rollout))(U, x0)
-
         fig, ax = plt.subplots()
-        prob.plot_scenario()
+        prob.env.plot_scenario()
         path = ax.plot([], [], "o-")[0]
 
         def update(i: int):
@@ -272,15 +276,12 @@ def deploy_trained_model(
             path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 
-        anim = FuncAnimation(
+        anim = FuncAnimation(  # noqa: F841 anim must stay in scope until plot
             fig,
             update,
             frames=options.num_noise_levels * num_samples,
             interval=10,
         )
-        if save_path is not None:
-            anim.save(save_path, writer="ffmpeg", fps=60)
-            print(f"Saved animation to {save_path}")
         plt.show()
 
 
