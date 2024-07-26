@@ -45,7 +45,7 @@ class ReachAvoidEnv(PipelineEnv):
             xd=base.Motion.create(vel=jnp.zeros(3)),
             contact=None,
         )
-        obs = jnp.zeros(2)
+        obs = pipeline_state.q
         reward, done = jnp.zeros(2)
         return State(pipeline_state, obs, reward, done)
 
