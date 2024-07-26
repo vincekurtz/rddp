@@ -68,9 +68,11 @@ class ReachAvoidEnv(PipelineEnv):
         obs = pos
 
         # Reward
-        action_cost = 0.1 * action.dot(action)
+        action_cost = action.dot(action)
         obstacle_cost = self._obstacle_cost(pos)
-        goal_cost = (pos - self.target_position).dot(pos - self.target_position)
+        goal_cost = 0.1 * (pos - self.target_position).dot(
+            pos - self.target_position
+        )
         reward = -(action_cost + obstacle_cost + goal_cost)
 
         return state.replace(
