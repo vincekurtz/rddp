@@ -16,8 +16,6 @@ class ReachAvoidEnv(PipelineEnv):
         self.horizontal_limits = (-3, 3)
         self.vertical_limits = (-3, 3)
 
-        # super().__init__(**kwargs)
-
     def reset(self, rng: jax.random.PRNGKey) -> State:
         """Reset the environment to a new initial state.
 
