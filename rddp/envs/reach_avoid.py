@@ -59,6 +59,16 @@ class ReachAvoidEnv(PipelineEnv):
         Return:
             the next state, including the updated reward and observation.
         """
+        # Velocity limits
+        vel_norm = jnp.linalg.norm(action)
+        vel_max = 0.5
+        action = jax.lax.cond(
+            vel_norm > vel_max,
+            lambda _: action / vel_norm * vel_max,
+            lambda _: action,
+            operand=None,
+        )
+
         # Forward dynamics
         pos = state.pipeline_state.q + action
         vel = action
