@@ -18,6 +18,7 @@ def test_rollout() -> None:
 
     # Roll out with the helper
     total_cost, state_trajectory = ocp.rollout(x0, control_tape)
+    assert state_trajectory.pipeline_state.q.shape == (ocp.num_steps + 1, 2)
 
     # Roll out manually
     x = x0

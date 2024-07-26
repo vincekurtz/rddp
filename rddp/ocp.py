@@ -45,10 +45,16 @@ class OptimalControlProblem:
             u = control_tape[t]
             x_next = self.env.step(x, u)
             cost -= x_next.reward
-            return (x_next, cost), x_next
+            return (x_next, cost), x
 
-        (_, total_cost), state_trajectory = jax.lax.scan(
+        (final_state, total_cost), state_trajectory = jax.lax.scan(
             scan_fn, (initial_state, 0.0), jnp.arange(self.num_steps)
+        )
+
+        state_trajectory = jax.tree.map(
+            lambda x, y: jnp.concatenate([x, jnp.expand_dims(y, 0)]),
+            state_trajectory,
+            final_state,
         )
 
         return total_cost, state_trajectory
