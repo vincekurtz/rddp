@@ -6,9 +6,10 @@ from typing import Union
 import h5py
 import jax
 import jax.numpy as jnp
+from brax.envs.base import State
 from flax.struct import dataclass
 
-from rddp.tasks.base import OptimalControlProblem
+from rddp.ocp import OptimalControlProblem
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
@@ -82,8 +83,8 @@ class DatasetGenerator:
 
         # Initialize the hdf5 file to save the dataset to
         self.h5_path = save_path / "dataset.h5"
-        y_shape = prob.sys.observation_shape
-        U_shape = (prob.num_steps - 1, *prob.sys.action_shape)
+        y_shape = (prob.env.observation_size,)
+        U_shape = (prob.num_steps - 1, prob.env.action_size)
         with h5py.File(self.h5_path, "w") as f:
             f.create_dataset(
                 "y0", (0, *y_shape), maxshape=(None, *y_shape), dtype="float32"
@@ -101,7 +102,7 @@ class DatasetGenerator:
 
     def estimate_noised_score(
         self,
-        x0: jnp.ndarray,
+        x0: State,
         controls: jnp.ndarray,
         sigma: float,
         rng: jax.random.PRNGKey,
@@ -141,7 +142,7 @@ class DatasetGenerator:
         )
 
         # Compute the cost of each control tape
-        J = jax.vmap(self.prob.total_cost, in_axes=(0, None))(U_noised, x0)
+        J, _ = jax.vmap(self.prob.rollout, in_axes=(None, 0))(x0, U_noised)
         J = J - jnp.min(J, axis=0)  # normalize for better numerics
 
         # Compute importance weights
