@@ -116,7 +116,7 @@ def generate_dataset(plot: bool = False) -> None:
     )
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
-        starting_noise_level=0.5,
+        starting_noise_level=1.0,
         num_steps=100,
         step_size=0.01,
         noise_injection_level=1.0,
@@ -167,7 +167,7 @@ def fit_score_model() -> None:
         epochs=50,
         learning_rate=1e-3,
     )
-    net = ScoreMLP(layer_sizes=(256,) * 3)
+    net = ScoreMLP(layer_sizes=(512,) * 3)
 
     # Train the score network
     st = time.time()

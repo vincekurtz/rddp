@@ -72,9 +72,9 @@ class BugTrapEnv(PipelineEnv):
 
         # Terminal cost
         goal_err = q_new[0:2] - self.target_position
-        reward -= jnp.where(
+        reward += jnp.where(
             state.info["step"] >= self.num_steps,
-            goal_err.dot(goal_err),
+            -goal_err.dot(goal_err),
             0.0,
         )
         done = jnp.where(state.info["step"] >= self.num_steps, 1.0, 0.0)
@@ -94,7 +94,7 @@ class BugTrapEnv(PipelineEnv):
         """
 
         def scan_fn(total_cost: float, obs_pos: jnp.ndarray):
-            cost = jnp.exp(-10 * jnp.linalg.norm(x[0:2] - obs_pos) ** 2)
+            cost = jnp.exp(-5 * jnp.linalg.norm(x[0:2] - obs_pos) ** 2)
             return total_cost + cost, None
 
         total_cost, _ = jax.lax.scan(scan_fn, 0.0, self.obs_positions)
