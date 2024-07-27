@@ -8,8 +8,13 @@ from brax.envs.base import PipelineEnv, State
 class BugTrapEnv(PipelineEnv):
     """A robot with unicycle dynamics must escape a U-shaped maze."""
 
-    def __init__(self):
-        """Initialize the environment."""
+    def __init__(self, num_steps: int):
+        """Initialize the environment.
+
+        Args:
+            num_steps: The planning horizon, used for adding the terminal cost.
+        """
+        self.num_steps = num_steps
         self.target_position = jnp.array([1.0, 0.0])
         self.horizontal_limits = (-3, 3)
         self.vertical_limits = (-3, 3)
@@ -37,20 +42,24 @@ class BugTrapEnv(PipelineEnv):
             xd=base.Motion.create(vel=jnp.zeros(3)),
             contact=None,
         )
-        obs = q
-        reward, done = jnp.zeros(2)
-        return State(pipeline_state, obs, reward, done)
+        return State(
+            pipeline_state=pipeline_state,
+            obs=q,
+            reward=0.0,
+            done=0.0,
+            info={"step": 0},
+        )
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Forward dynamics, observation, and reward."""
-        action = jnp.clip(action, -1.0, 1.0)
+        state.info["step"] += 1
 
-        # Dyanamics
+        # Dynamics
         q = state.pipeline_state.q
         v, w = action
         theta = q[2]
         qdot = jnp.array([v * jnp.cos(theta), v * jnp.sin(theta), w])
-        q_new = q + 1.0 * qdot
+        q_new = q + 0.3 * qdot  # dt = 0.3
         new_pipeline_state = state.pipeline_state.replace(q=q_new)
 
         # Observation
@@ -59,11 +68,19 @@ class BugTrapEnv(PipelineEnv):
         # Reward
         action_cost = action.dot(action)
         obstacle_cost = self._obstacle_cost(q_new)
-        goal_cost = jnp.linalg.norm(q_new[0:2] - self.target_position) ** 2
-        reward = -0.1 * action_cost - 1000 * obstacle_cost - goal_cost
+        reward = -0.1 * action_cost - 1000 * obstacle_cost
+
+        # Terminal cost
+        goal_err = q_new[0:2] - self.target_position
+        reward -= jnp.where(
+            state.info["step"] >= self.num_steps,
+            goal_err.dot(goal_err),
+            0.0,
+        )
+        done = jnp.where(state.info["step"] >= self.num_steps, 1.0, 0.0)
 
         return state.replace(
-            pipeline_state=new_pipeline_state, obs=obs, reward=reward
+            pipeline_state=new_pipeline_state, obs=obs, reward=reward, done=done
         )
 
     def _obstacle_cost(self, x: jnp.ndarray) -> jnp.ndarray:

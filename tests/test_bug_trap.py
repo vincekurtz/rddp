@@ -8,7 +8,7 @@ from rddp.envs.bug_trap import BugTrapEnv
 
 def test_plot() -> None:
     """Test plotting the reach-avoid scenario."""
-    env = BugTrapEnv()
+    env = BugTrapEnv(num_steps=10)
     env.plot_scenario()
     if __name__ == "__main__":
         # Only show the plot if this script is run directly, not in pytest.
@@ -18,18 +18,20 @@ def test_plot() -> None:
 def test_step_reset() -> None:
     """Test the basic step and reset functions."""
     rng = jax.random.PRNGKey(0)
-    env = BugTrapEnv()
+    env = BugTrapEnv(num_steps=10)
 
     rng, reset_rng = jax.random.split(rng)
     state = env.reset(reset_rng)
     assert isinstance(state, State)
     start_pos = state.pipeline_state.q
     assert start_pos.shape == (3,)
+    assert state.info["step"] == 0
 
     vel = jnp.array([0.8, 0.3])
     state = env.step(state, vel)
     assert isinstance(state, State)
     assert state.pipeline_state.q.shape == (3,)
+    assert state.info["step"] == 1
 
 
 if __name__ == "__main__":

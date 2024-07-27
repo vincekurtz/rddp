@@ -28,7 +28,9 @@ HORIZON = 20
 
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    prob = OptimalControlProblem(BugTrapEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
+    )
     x0 = prob.env.reset(jax.random.PRNGKey(0))
     U, _, _ = solve_gd(prob, x0)
 
