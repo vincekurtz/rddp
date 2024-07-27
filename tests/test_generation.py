@@ -23,7 +23,7 @@ def test_score_estimate() -> None:
     local_dir = Path("_test_score_estimate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=3,
         starting_noise_level=0.1,
@@ -75,7 +75,7 @@ def test_save_dataset() -> None:
     local_dir = Path("_test_score_estimate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=3,
         starting_noise_level=0.1,
@@ -141,7 +141,7 @@ def test_generate() -> None:
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a generator
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
         starting_noise_level=0.1,

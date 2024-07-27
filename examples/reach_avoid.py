@@ -24,7 +24,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 20
+HORIZON = 10
 
 
 def solve_with_gradient_descent(
@@ -122,7 +122,10 @@ def generate_dataset(plot: bool = False) -> None:
     save_path = "/tmp/reach_avoid/"
 
     # Problem setup
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        ReachAvoidEnv(num_steps=HORIZON),
+        num_steps=HORIZON,
+    )
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.1,
@@ -197,7 +200,10 @@ def fit_score_model() -> None:
 def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        ReachAvoidEnv(num_steps=HORIZON),
+        num_steps=HORIZON,
+    )
 
     def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
         """Do a rollout from an observation, and return observations."""
