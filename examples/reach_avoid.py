@@ -31,7 +31,9 @@ def solve_with_gradient_descent(
     plot: bool = True, u_guess: float = 0.0
 ) -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        ReachAvoidEnv(num_steps=HORIZON), num_steps=HORIZON
+    )
     x0 = prob.env.reset(jax.random.PRNGKey(0))
     x0 = x0.tree_replace({"pipeline_state.q": jnp.array([0.1, -1.5])})
     u_guess = u_guess * jnp.ones((prob.num_steps - 1, prob.env.action_size))

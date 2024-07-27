@@ -8,9 +8,13 @@ from brax.envs.base import PipelineEnv, State
 class ReachAvoidEnv(PipelineEnv):
     """A simple planar robot must reach a target while avoiding an obstacle."""
 
-    def __init__(self):
-        """Initialize the reach-avoid problem."""
-        # Set problem parameters
+    def __init__(self, num_steps: int):
+        """Initialize the reach-avoid problem.
+
+        Args:
+            num_steps: The planning horizon, used for adding the terminal cost.
+        """
+        self.num_steps = num_steps
         self.obstacle_position = jnp.array([0.0, 0.0])
         self.target_position = jnp.array([0.0, 1.5])
         self.horizontal_limits = (-3, 3)
@@ -44,8 +48,13 @@ class ReachAvoidEnv(PipelineEnv):
             contact=None,
         )
         obs = pipeline_state.q
-        reward, done = jnp.zeros(2)
-        return State(pipeline_state, obs, reward, done)
+        return State(
+            pipeline_state=pipeline_state,
+            obs=obs,
+            reward=0.0,
+            done=0.0,
+            info={"step": 0},
+        )
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Forward dynamics step.
@@ -57,16 +66,6 @@ class ReachAvoidEnv(PipelineEnv):
         Return:
             the next state, including the updated reward and observation.
         """
-        # Velocity limits
-        vel_norm = jnp.linalg.norm(action)
-        vel_max = 0.5
-        action = jax.lax.cond(
-            vel_norm > vel_max,
-            lambda _: action / vel_norm * vel_max,
-            lambda _: action,
-            operand=None,
-        )
-
         # Forward dynamics
         pos = state.pipeline_state.q + action
         vel = action
@@ -78,13 +77,24 @@ class ReachAvoidEnv(PipelineEnv):
         # Reward
         action_cost = action.dot(action)
         obstacle_cost = self._obstacle_cost(pos)
-        goal_cost = 0.1 * (pos - self.target_position).dot(
-            pos - self.target_position
+        reward = -(action_cost + obstacle_cost)
+
+        # Record the step so we know when to stop and add the terminal cost
+        state.info["step"] += 1
+
+        # Terminal cost
+        reward -= jnp.where(
+            state.info["step"] >= self.num_steps,
+            (pos - self.target_position).dot(pos - self.target_position),
+            0.0,
         )
-        reward = -(action_cost + obstacle_cost + goal_cost)
+        done = jnp.where(state.info["step"] >= self.num_steps, 1.0, 0.0)
 
         return state.replace(
-            pipeline_state=new_pipeline_state, obs=obs, reward=reward
+            pipeline_state=new_pipeline_state,
+            obs=obs,
+            reward=reward,
+            done=done,
         )
 
     def _obstacle_cost(self, x: jnp.ndarray) -> jnp.ndarray:
