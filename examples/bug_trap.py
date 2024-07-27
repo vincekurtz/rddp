@@ -111,7 +111,9 @@ def generate_dataset(plot: bool = False) -> None:
     save_path = "/tmp/bug_trap/"
 
     # Problem setup
-    prob = OptimalControlProblem(BugTrapEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
+    )
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=300,
         starting_noise_level=0.5,
@@ -189,7 +191,9 @@ def deploy_trained_model(
 ) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = OptimalControlProblem(BugTrapEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
+    )
 
     def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
         """Do a rollout from an observation, and return observations."""
