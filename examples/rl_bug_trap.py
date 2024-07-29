@@ -52,7 +52,7 @@ def progress_fn(step: int, metrics: dict) -> None:
     times.append(datetime.now())
     print(
         f'  step={step}, reward={metrics["eval/episode_reward"]}, '
-        f'time={times[-1]}'
+        f'time={times[-1] - times[0]}'
     )
 
 
