@@ -10,7 +10,6 @@ class DoubleIntegratorEnv(PipelineEnv):
 
     def __init__(self):
         """Initialize the double integrator environment."""
-        self.target_state = jnp.array([0.0, 0.0])
         self.position_limits = (-3, 3)
         self.velocity_limits = (-3, 3)
 
@@ -67,12 +66,13 @@ class DoubleIntegratorEnv(PipelineEnv):
         new_pipeline_state = state.pipeline_state.replace(q=new_pos, qd=new_vel)
 
         # Observation
-        obs = jnp.array([new_pos, new_vel])
+        obs = jnp.array([new_pos[0], new_vel[0]])
 
         # Reward
-        action_cost = action.dot(action)
-        state_cost = (pos - self.target_state).dot(pos - self.target_state)
-        reward = -(action_cost + state_cost)
+        action_cost = 0.01 * action.dot(action)
+        velocity_cost = 0.1 * vel.dot(vel)
+        position_cost = pos.dot(pos)
+        reward = -(action_cost + position_cost + velocity_cost)
 
         return state.replace(
             pipeline_state=new_pipeline_state,
@@ -93,7 +93,7 @@ class DoubleIntegratorEnv(PipelineEnv):
     def plot_scenario(self) -> None:
         """Plot the vector field and target."""
         # Green star at the target state
-        plt.plot(*self.target_state, "g*", markersize=20)
+        plt.plot(0.0, 0.0, "g*", markersize=20)
 
         # Sample some initial states in a grid
         p = jnp.linspace(*self.position_limits, 20)
