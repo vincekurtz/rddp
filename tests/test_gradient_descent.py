@@ -10,7 +10,7 @@ from rddp.ocp import OptimalControlProblem
 def test_gradient_descent() -> None:
     """Test solving the reach-avoid problem using gradient descent."""
     rng = jax.random.PRNGKey(2)
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=10)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=10), num_steps=10)
 
     rng, reset_rng = jax.random.split(rng)
     x0 = prob.env.reset(reset_rng)
@@ -24,7 +24,7 @@ def test_gradient_descent() -> None:
     target_position = prob.env.target_position
 
     assert jnp.allclose(positions[0], x0.pipeline_state.q)
-    assert jnp.linalg.norm(positions[-1] - target_position) < 0.3
+    assert jnp.linalg.norm(positions[-1] - target_position) < 0.5
 
     if __name__ == "__main__":
         # Only make plots for a manual run

@@ -20,7 +20,7 @@ def test_training() -> None:
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate a training dataset
-    prob = OptimalControlProblem(ReachAvoidEnv(), num_steps=5)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=5), num_steps=5)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=100,
         starting_noise_level=0.5,
