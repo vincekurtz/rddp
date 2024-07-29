@@ -3,23 +3,24 @@ from typing import Tuple
 
 import jax
 import jax.numpy as jnp
+from brax.envs.base import State
 
-from rddp.tasks.base import OptimalControlProblem
+from rddp.ocp import OptimalControlProblem
 
 
 def solve(
     prob: OptimalControlProblem,
-    x0: jnp.ndarray,
+    initial_state: State,
     u_guess: jnp.ndarray = None,
-    max_iter: int = 5000,
+    max_iter: int = 1000,
     step_size: float = 0.01,
-    print_every: int = 1000,
+    print_every: int = 200,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Solve a trajectory optimization using vanilla gradient descent.
 
     Args:
         prob: The optimal control problem.
-        x0: The initial state.
+        initial_state: The initial state x0.
         u_guess: An initial guess for the control trajectory.
         max_iter: The maximum number of iterations.
         step_size: The gradient descent step size.
@@ -30,13 +31,13 @@ def solve(
     """
     # Initialize the control tape.
     if u_guess is None:
-        U = jnp.zeros((prob.num_steps, *prob.sys.action_shape))
+        U = jnp.zeros((prob.num_steps, prob.env.action_size))
     else:
         U = u_guess
 
     # Define cost and gradient functions.
     cost_and_grad = jax.jit(
-        jax.value_and_grad(lambda us: prob.total_cost(us, x0))
+        jax.value_and_grad(lambda us: prob.rollout(initial_state, us)[0])
     )
 
     # Run gradient descent.

@@ -5,8 +5,9 @@ import h5py
 import jax
 import jax.numpy as jnp
 
+from rddp.envs.reach_avoid import ReachAvoidEnv
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
-from rddp.tasks.reach_avoid import ReachAvoid
+from rddp.ocp import OptimalControlProblem
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
@@ -22,7 +23,7 @@ def test_score_estimate() -> None:
     local_dir = Path("_test_score_estimate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    prob = ReachAvoid(num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=3,
         starting_noise_level=0.1,
@@ -39,13 +40,14 @@ def test_score_estimate() -> None:
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Set initial state
-    x0 = jnp.array([0.1, -1.5])
+    rng, reset_rng = jax.random.split(rng)
+    x0 = prob.env.reset(reset_rng)
 
     # Guess a control sequence
     sigma = langevin_options.starting_noise_level
     rng, U_rng = jax.random.split(rng)
     U = sigma * jax.random.normal(
-        U_rng, (prob.num_steps - 1, prob.sys.action_shape[0])
+        U_rng, (prob.num_steps - 1, prob.env.action_size)
     )
 
     # Estimate the score
@@ -55,7 +57,9 @@ def test_score_estimate() -> None:
     assert s.shape == U.shape
 
     # Gradient descent should improve the cost
-    assert prob.total_cost(U, x0) > prob.total_cost(U + sigma**2 * s, x0)
+    original_cost, _ = prob.rollout(x0, U)
+    new_cost, _ = prob.rollout(x0, U + sigma**2 * s)
+    assert new_cost < original_cost
 
     # Remove the temporary directory
     for p in local_dir.iterdir():
@@ -71,7 +75,7 @@ def test_save_dataset() -> None:
     local_dir = Path("_test_score_estimate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    prob = ReachAvoid(num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=3,
         starting_noise_level=0.1,
@@ -133,11 +137,11 @@ def test_save_dataset() -> None:
 def test_generate() -> None:
     """Test the dataset generation process."""
     # Create a temporary directory
-    local_dir = Path("_test_save_dataset")
+    local_dir = Path("_test_generate")
     local_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a generator
-    prob = ReachAvoid(num_steps=20)
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=250,
         starting_noise_level=0.1,
