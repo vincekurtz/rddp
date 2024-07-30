@@ -27,7 +27,7 @@ def test_rollout() -> None:
     total_cost_manual = 0.0
     for i in range(ocp.num_steps):
         assert jnp.all(x.done == 0.0)
-        u = control_tape[i]
+        u = jnp.tanh(control_tape[i])
         x = env.step(x, u)
         total_cost_manual -= x.reward
     assert jnp.all(x.done == 1.0)
