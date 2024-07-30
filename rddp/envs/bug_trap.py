@@ -53,6 +53,7 @@ class BugTrapEnv(PipelineEnv):
     def step(self, state: State, action: jnp.ndarray) -> State:
         """Forward dynamics, observation, and reward."""
         state.info["step"] += 1
+        action *= 10  # scale original actions
 
         # Dynamics
         q = state.pipeline_state.q
@@ -94,7 +95,7 @@ class BugTrapEnv(PipelineEnv):
         """
 
         def scan_fn(total_cost: float, obs_pos: jnp.ndarray):
-            cost = jnp.exp(-5 * jnp.linalg.norm(x[0:2] - obs_pos) ** 2)
+            cost = jnp.exp(-10 * jnp.linalg.norm(x[0:2] - obs_pos) ** 2)
             return total_cost + cost, None
 
         total_cost, _ = jax.lax.scan(scan_fn, 0.0, self.obs_positions)
