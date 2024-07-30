@@ -16,15 +16,17 @@ class OptimalControlProblem:
     distribution.
     """
 
-    def __init__(self, env: PipelineEnv, num_steps: int):
+    def __init__(self, env: PipelineEnv, num_steps: int, u_max: float = 1.0):
         """Initialize the optimal control problem.
 
         Args:
             env: The system to control (includes dynamics and reward/cost).
             num_steps: The number of time steps in the planning horizon.
+            u_max: The maximum control input magnitude.
         """
         self.env = env
         self.num_steps = num_steps
+        self.u_max = u_max
 
     def rollout(
         self, initial_state: State, control_tape: jnp.ndarray
@@ -42,7 +44,7 @@ class OptimalControlProblem:
 
         def scan_fn(carry: Tuple, t: int):
             x, cost = carry
-            u = control_tape[t]
+            u = self.u_max * jnp.tanh(control_tape[t] / self.u_max)
             x_next = self.env.step(x, u)
             cost -= x_next.reward
             return (x_next, cost), x
