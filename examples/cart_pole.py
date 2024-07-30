@@ -4,6 +4,8 @@ import time
 
 import jax
 import jax.numpy as jnp
+import mujoco
+import mujoco.viewer
 from brax.envs.inverted_pendulum import InvertedPendulum
 
 from rddp.architectures import ScoreMLP
@@ -139,10 +141,52 @@ def deploy_trained_model() -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-    U = data.U[:, :, -1, :]
-    costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
-    print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
+    y0 = data.y0[:, -1, -1, :]  # x0, noise level, step, dim
+    U = data.U[:, -1, -1, :, :]
+    costs, Xs = jax.vmap(rollout_from_obs)(y0, U)
+    print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
+
+    visualize_trajectories(prob, Xs[:, :, :2])
+
+
+def visualize_trajectories(prob: OptimalControlProblem, q: jnp.ndarray) -> None:
+    """Visualize optimized trajectories on the mujoco viewer.
+
+    Args:
+        prob: The optimal control problem, with an MJX env.
+        q: The optimized positions, size (num_samples, HORIZON, nq).
+    """
+    num_samples = q.shape[0]
+
+    mj_model = prob.env.sys.mj_model
+    mj_data = mujoco.MjData(mj_model)
+
+    dt = float(prob.env.dt)
+    i, t = 0, 0
+    with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
+        while viewer.is_running():
+            start_time = time.time()
+
+            # Update the position of the cart-pole
+            mj_data.qpos[:2] = q[i, t]
+            mj_data.qvel[:2] = 0.0
+
+            # Update the viewer
+            mujoco.mj_forward(mj_model, mj_data)
+            viewer.sync()
+
+            # Try to run in realtime
+            elapsed = time.time() - start_time
+            if elapsed < dt:
+                time.sleep(dt - elapsed)
+
+            # Advance the time step and/or the sample index
+            t += 1
+            if t == HORIZON:
+                time.sleep(1.0)
+                t = 0
+                i += 1
+                i = i % num_samples
 
 
 if __name__ == "__main__":
