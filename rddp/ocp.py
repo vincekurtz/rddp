@@ -46,7 +46,7 @@ class OptimalControlProblem:
             x, cost = carry
             u = self.u_max * jnp.tanh(control_tape[t] / self.u_max)
             x_next = self.env.step(x, u)
-            cost -= x_next.reward
+            cost -= x_next.reward * (1 - x_next.done)
             return (x_next, cost), x
 
         (final_state, total_cost), state_trajectory = jax.lax.scan(

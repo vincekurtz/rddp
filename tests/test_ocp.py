@@ -19,8 +19,7 @@ def test_rollout() -> None:
     # Roll out with the helper
     total_cost, state_trajectory = ocp.rollout(x0, control_tape)
     assert state_trajectory.pipeline_state.q.shape == (ocp.num_steps + 1, 2)
-    assert jnp.all(state_trajectory.done[0:-1] == 0.0)
-    assert state_trajectory.done[-1] == 1.0
+    assert jnp.all(state_trajectory.done == 0.0)
 
     # Roll out manually
     x = x0
@@ -30,7 +29,9 @@ def test_rollout() -> None:
         u = jnp.tanh(control_tape[i])
         x = env.step(x, u)
         total_cost_manual -= x.reward
-    assert jnp.all(x.done == 1.0)
+    assert jnp.all(x.done == 0.0)
+    y = env.step(x, jnp.zeros(2))  # one more step than the horizon
+    assert jnp.all(y.done == 1.0)
 
     assert jnp.allclose(total_cost, total_cost_manual)
     assert jnp.allclose(
