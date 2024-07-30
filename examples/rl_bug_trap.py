@@ -26,8 +26,8 @@ env = envs.get_environment("bug_trap")
 # Set up training
 train_fn = functools.partial(
     ppo.train,
-    num_timesteps=10_000_000,
-    num_evals=5,
+    num_timesteps=50_000_000,
+    num_evals=10,
     reward_scaling=0.1,
     episode_length=HORIZON,
     normalize_observations=True,
@@ -66,7 +66,7 @@ print(f"Time to jit: {times[1] - times[0]}")
 print(f"Time to train: {times[-1] - times[1]}")
 
 # set up the policy
-inference_fn = make_inference_fn(params)
+inference_fn = make_inference_fn(params, deterministic=True)
 jit_policy = jax.jit(inference_fn)
 jit_reset = jax.jit(env.reset)
 jit_step = jax.jit(env.step)
