@@ -52,13 +52,12 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     # Angle and angular velocity
     theta = x[0]
     theta_dot = x[1]
-    tau = jnp.tanh(u)[0]  # enforces input limits
 
     # Error based on sin and cos of angle
     theta_error = jnp.sin(theta) ** 2 + (jnp.cos(theta) - 1.0) ** 2
 
     # Cost
-    return 0.1 * theta_error + 0.01 * theta_dot**2 + 0.001 * tau**2
+    return 0.1 * theta_error + 0.01 * theta_dot**2 + 0.001 * u[0] ** 2
 
 
 def rollout(
@@ -94,6 +93,25 @@ def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
     Returns:
         the optimal state trajectory
     """
+
+    def objective(us: jnp.ndarray) -> jnp.ndarray:
+        _, J = rollout(x0, us)
+        return J
+
+    cost_and_grad = jax.jit(jax.value_and_grad(objective))
+
+    # Initial guess
+    us = jnp.zeros((horizon, 1))
+    num_iters = 5000
+    for i in range(num_iters):
+        J, dJ = cost_and_grad(us)
+        us -= 0.1 * dJ
+
+        if i % 100 == 0 or i == num_iters - 1:
+            grad_norm = jnp.linalg.norm(dJ)
+            print(f"Iteration {i}, cost {J}, grad norm {grad_norm}")
+
+    return rollout(x0, us)[0]
 
 
 def make_meshgrid(
@@ -137,10 +155,7 @@ def plot_vector_field() -> None:
 if __name__ == "__main__":
     plot_vector_field()
 
-    U = jnp.zeros((20, 1))
-    X, J = rollout(jnp.array([3.0, -1.0]), U)
-    print(J)
-
+    X = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
     plt.plot(X[:, 0], X[:, 1], "o-")
 
     plt.show()
