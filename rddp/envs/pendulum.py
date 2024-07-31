@@ -85,9 +85,7 @@ class PendulumEnv(PipelineEnv):
         theta_cost = theta_error
         theta_dot_cost = new_theta_dot**2
 
-        reward = -(
-            0.1 * theta_cost + 0.01 * theta_dot_cost + 0.001 * input_cost
-        )
+        reward = -(0.1 * theta_cost + 0.1 * theta_dot_cost + 0.001 * input_cost)
 
         return state.replace(
             pipeline_state=new_pipeline_state,

@@ -28,7 +28,7 @@ def f(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     tau = jnp.tanh(u)[0]  # enforces input limits
 
     # Mass, length, gravity
-    m = 1.0
+    m = 5.0
     g = 9.81
     l = 1.0  # noqa: E741 (ignore ambiguous variable name)
 
@@ -52,12 +52,21 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     # Angle and angular velocity
     theta = x[0]
     theta_dot = x[1]
+    return 0.0 * theta**2 + 0.0 * theta_dot**2 + 0.01 * u[0] ** 2
 
-    # Error based on sin and cos of angle
-    theta_error = jnp.sin(theta) ** 2 + (jnp.cos(theta) - 1.0) ** 2
 
-    # Cost
-    return 0.1 * theta_error + 0.01 * theta_dot**2 + 0.001 * u[0] ** 2
+def terminal_cost(x: jnp.ndarray) -> jnp.ndarray:
+    """The terminal cost for pendulum swingup.
+
+    Args:
+        x: state of the pendulum (angle, angular velocity)
+
+    Returns:
+        the terminal cost phi(x)
+    """
+    theta = x[0]
+    theta_dot = x[1]
+    return 10.0 * theta**2 + 1.0 * theta_dot**2
 
 
 def rollout(
@@ -79,11 +88,14 @@ def rollout(
         J += cost(x, u)
         return (x, J), x
 
-    (_, J), X = jax.lax.scan(scan_fn, (x0, 0.0), us)
+    (x, J), X = jax.lax.scan(scan_fn, (x0, 0.0), us)
+    J += terminal_cost(x)
     return X, J
 
 
-def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
+def shooting_gradient_descent(
+    x0: jnp.ndarray, horizon: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Do simple single-shooting gradient descent.
 
     Args:
@@ -91,7 +103,7 @@ def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
         horizon: number of time steps to plan over
 
     Returns:
-        the optimal state trajectory
+        the optimal state trajectory, and control sequence.
     """
     # Parameters
     num_iters = 5000
@@ -115,10 +127,12 @@ def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
             grad_norm = jnp.linalg.norm(dJ)
             print(f"Iteration {i}, cost {J}, grad norm {grad_norm}")
 
-    return rollout(x0, us)[0]
+    return rollout(x0, us)[0], us
 
 
-def shooting_mppi(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
+def shooting_mppi(
+    x0: jnp.ndarray, horizon: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Do simple single-shooting MPPI.
 
     Args:
@@ -166,7 +180,7 @@ def shooting_mppi(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
             J = jit_objective(us)
             print(f"Iteration {i}, cost {J}")
 
-    return rollout(x0, us)[0]
+    return rollout(x0, us)[0], us
 
 
 def make_meshgrid(
@@ -186,7 +200,6 @@ def plot_vector_field() -> None:
     # Set up the plot
     theta_range = (-1.5 * jnp.pi, 1.5 * jnp.pi)
     theta_dot_range = (-8.0, 8.0)
-    plt.figure(figsize=(10, 6))
     plt.xlim(*theta_range)
     plt.ylim(*theta_dot_range)
 
@@ -200,20 +213,28 @@ def plot_vector_field() -> None:
 
     # Cost contours
     X = make_meshgrid(theta_range, theta_dot_range, 100)
-    U = jnp.zeros((100, 100, 1))
-    C = jax.vmap(jax.vmap(cost))(X, U)
+    C = jax.vmap(jax.vmap(terminal_cost))(X)
     plt.contourf(X[:, :, 0], X[:, :, 1], C, levels=20, alpha=0.5)
     cbar = plt.colorbar()
     cbar.set_label("Cost")
 
 
 if __name__ == "__main__":
+    fig, ax = plt.subplots(2, 1)
+
+    # X, U = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
+    X, U = shooting_mppi(jnp.array([3.0, 1.0]), 50)
+
+    # Plot the state trajectory
+    plt.sca(ax[0])
     plot_vector_field()
-
-    # X = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
-    # plt.plot(X[:, 0], X[:, 1], "o-")
-
-    X = shooting_mppi(jnp.array([3.0, -1.0]), 50)
     plt.plot(X[:, 0], X[:, 1], "o-")
+
+    # Plot the control tape over time
+    plt.sca(ax[1])
+    plt.plot(jnp.tanh(U))
+    plt.xlabel("Time step")
+    plt.ylabel("Control torque")
+    plt.ylim(-1.1, 1.1)
 
     plt.show()
