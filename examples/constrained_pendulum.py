@@ -84,7 +84,7 @@ def rollout(
 
 
 def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
-    """Do simpling single-shooting gradient descent.
+    """Do simple single-shooting gradient descent.
 
     Args:
         x0: initial state of the pendulum
@@ -93,23 +93,78 @@ def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
     Returns:
         the optimal state trajectory
     """
+    # Parameters
+    num_iters = 5000
+    print_every = 100
+    alpha = 0.1
 
+    # Objective and gradient functions
     def objective(us: jnp.ndarray) -> jnp.ndarray:
         _, J = rollout(x0, us)
         return J
 
     cost_and_grad = jax.jit(jax.value_and_grad(objective))
 
-    # Initial guess
-    us = jnp.zeros((horizon, 1))
-    num_iters = 5000
+    # Optimize
+    us = jnp.zeros((horizon, 1))  # initial guess
     for i in range(num_iters):
         J, dJ = cost_and_grad(us)
-        us -= 0.1 * dJ
+        us -= alpha * dJ
 
-        if i % 100 == 0 or i == num_iters - 1:
+        if i % print_every == 0 or i == num_iters - 1:
             grad_norm = jnp.linalg.norm(dJ)
             print(f"Iteration {i}, cost {J}, grad norm {grad_norm}")
+
+    return rollout(x0, us)[0]
+
+
+def shooting_mppi(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
+    """Do simple single-shooting MPPI.
+
+    Args:
+        x0: initial state of the pendulum
+        horizon: number of time steps to plan over
+
+    Returns:
+        the optimal state trajectory
+    """
+    rng = jax.random.PRNGKey(0)
+
+    # Parameters
+    num_iters = 5000
+    print_every = 100
+    temperature = 0.01
+    sigma = 0.1
+    num_samples = 32
+
+    # Objective function
+    def objective(us: jnp.ndarray) -> jnp.ndarray:
+        _, J = rollout(x0, us)
+        return J
+
+    jit_objective = jax.jit(objective)
+    vmap_objective = jax.jit(jax.vmap(objective))
+
+    # Optimize
+    us = jnp.zeros((horizon, 1))  # initial guess
+    for i in range(num_iters):
+        # Generate noised control tapes
+        rng, noise_rng = jax.random.split(rng)
+        noise = sigma * jax.random.normal(noise_rng, (num_samples, horizon, 1))
+        U = us + noise
+
+        # Evaluate the cost of each noised control tape
+        J = vmap_objective(U)
+        Jmin = jnp.min(J, axis=0)
+
+        # Take the exponentially weighted average
+        w = jnp.exp(-1.0 / temperature * (J - Jmin))
+        w /= jnp.sum(w, axis=0)
+        us = jnp.einsum("i,ijk->jk", w, U)
+
+        if i % print_every == 0 or i == num_iters - 1:
+            J = jit_objective(us)
+            print(f"Iteration {i}, cost {J}")
 
     return rollout(x0, us)[0]
 
@@ -155,7 +210,10 @@ def plot_vector_field() -> None:
 if __name__ == "__main__":
     plot_vector_field()
 
-    X = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
+    # X = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
+    # plt.plot(X[:, 0], X[:, 1], "o-")
+
+    X = shooting_mppi(jnp.array([3.0, -1.0]), 50)
     plt.plot(X[:, 0], X[:, 1], "o-")
 
     plt.show()
