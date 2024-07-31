@@ -140,7 +140,7 @@ def shooting_mppi(
         horizon: number of time steps to plan over
 
     Returns:
-        the optimal state trajectory
+        the optimal state trajectory and control sequence
     """
     rng = jax.random.PRNGKey(0)
 
@@ -183,6 +183,86 @@ def shooting_mppi(
     return rollout(x0, us)[0], us
 
 
+def direct_mppi(
+    x0: jnp.ndarray, horizon: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Do MPPI with constrained dynamics.
+
+    Args:
+        x0: initial state of the pendulum
+        horizon: number of time steps to plan over
+
+    Returns:
+        the optimal state trajectory and control sequence
+    """
+    rng = jax.random.PRNGKey(0)
+
+    # Parameters
+    num_iters = 5000
+    print_every = 100
+    temperature = 0.01
+    sigma = 0.1
+    num_samples = 128
+
+    # Objective functions
+    def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """The total cost of a trajectory."""
+        xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+        running = jax.vmap(cost)(xs[:-1], us)
+        terminal = terminal_cost(xs[-1])
+        return jnp.sum(running) + terminal
+
+    def dynamics_residual(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """Residual of the dynamics."""
+        xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+        x_pred = jax.vmap(f)(xs[:-1], us)
+        x_next = xs[1:]
+        return jnp.sum(jnp.square((x_pred - x_next).flatten()))
+
+    jit_cost = jax.jit(cost_fn)
+    jit_residual = jax.jit(dynamics_residual)
+    vmap_cost = jax.jit(jax.vmap(cost_fn))
+    vmap_residual = jax.jit(jax.vmap(dynamics_residual))
+
+    # Define initial guesses
+    rng, u_rng, x_rng = jax.random.split(rng, 3)
+    us = 0.0 * jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
+    xs = 0.0 * jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
+
+    # Optimize
+    for i in range(num_iters):
+        # Generate noised control tapes and state sequences
+        rng, u_rng, x_rng = jax.random.split(rng, 3)
+        U = us + sigma * jax.random.normal(u_rng, (num_samples, horizon, 1))
+        X = xs + sigma * jax.random.normal(x_rng, (num_samples, horizon, 2))
+
+        # Compute the cost-related score
+        J = vmap_cost(X, U)
+        Jmin = jnp.min(J, axis=0)
+        w = jnp.exp(-1.0 / temperature * (J - Jmin))
+        w /= jnp.sum(w, axis=0)
+        s_uJ = us - jnp.einsum("i,ijk->jk", w, U)
+        s_xJ = xs - jnp.einsum("i,ijk->jk", w, X)
+
+        # Compute the dynamics-related score
+        F = vmap_residual(X, U)
+        best = jnp.argmin(F)
+        s_uF = us - U[best]
+        s_xF = xs - X[best]
+
+        # Update the control tape
+        us = us - 0.1 * s_uF - 0.0 * s_uJ
+        xs = xs - 0.1 * s_xF - 0.0 * s_xJ
+
+        if i % print_every == 0 or i == num_iters - 1:
+            J = jit_cost(xs, us)
+            F = jnp.sum(jnp.square(jit_residual(xs, us)))
+            print(f"Iteration {i}, cost {J}, dynamics {F}")
+
+    xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+    return xs, us
+
+
 def make_meshgrid(
     theta_range: Sequence[float],
     theta_dot_range: Sequence[float],
@@ -223,7 +303,8 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(2, 1)
 
     # X, U = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
-    X, U = shooting_mppi(jnp.array([3.0, 1.0]), 50)
+    # X, U = shooting_mppi(jnp.array([3.0, 1.0]), 50)
+    X, U = direct_mppi(jnp.array([3.0, 1.0]), 50)
 
     # Plot the state trajectory
     plt.sca(ax[0])
