@@ -198,10 +198,10 @@ def direct_mppi(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 50_000
+    num_iters = 100_000
     print_every = 1000
-    temperature = 0.01
-    sigma = 1.0
+    temperature = 0.1
+    sigma = 0.1
     num_samples = 128
 
     # Objective functions
@@ -251,8 +251,8 @@ def direct_mppi(
         s_xF = xs - X[best]
 
         # Update the control tape
-        us = us - 0.1 * s_uF - 0.0 * s_uJ
-        xs = xs - 0.1 * s_xF - 0.0 * s_xJ
+        us = us - 0.1 * s_uF - 0.1 * s_uJ
+        xs = xs - 0.1 * s_xF - 0.1 * s_xJ
 
         if i % print_every == 0 or i == num_iters - 1:
             J = jit_cost(xs, us)
