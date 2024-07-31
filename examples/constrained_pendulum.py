@@ -198,8 +198,8 @@ def direct_mppi(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 100_000
-    print_every = 1000
+    num_iters = 1_000
+    print_every = 100
     temperature = 0.1
     sigma = 0.1
     num_samples = 128
@@ -217,12 +217,30 @@ def direct_mppi(
         xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
         x_pred = jax.vmap(f)(xs[:-1], us)
         x_next = xs[1:]
-        return jnp.sum(jnp.square((x_pred - x_next).flatten()))
+        return (x_pred - x_next).flatten()
+
+    def flat_dynamics_residual(y: jnp.ndarray) -> jnp.ndarray:
+        """Dynamics residual with y = [x.flatten(), u.flatten()]."""
+        x = y[: horizon * 2].reshape((horizon, 2))
+        u = y[horizon * 2 :].reshape((horizon, 1))
+        return dynamics_residual(x, u)
+
+    def flatten(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """Flatten all decision variables into a vector."""
+        return jnp.concatenate([xs.flatten(), us.flatten()])
+
+    def unflatten(y: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """Unflatten a vector into states and controls."""
+        xs = y[: horizon * 2].reshape((horizon, 2))
+        us = y[horizon * 2 :].reshape((horizon, 1))
+        return xs, us
 
     jit_cost = jax.jit(cost_fn)
     jit_residual = jax.jit(dynamics_residual)
     vmap_cost = jax.jit(jax.vmap(cost_fn))
     vmap_residual = jax.jit(jax.vmap(dynamics_residual))
+
+    vmap_flat_residual = jax.jit(jax.vmap(flat_dynamics_residual))
 
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
@@ -237,28 +255,36 @@ def direct_mppi(
         X = xs + sigma * jax.random.normal(x_rng, (num_samples, horizon, 2))
 
         # Compute the cost-related score
-        J = vmap_cost(X, U)
-        Jmin = jnp.min(J, axis=0)
-        w = jnp.exp(-1.0 / temperature * (J - Jmin))
+        L = vmap_cost(X, U)
+        Lmin = jnp.min(L, axis=0)
+        w = jnp.exp(-1.0 / temperature * (L - Lmin))
         w /= jnp.sum(w, axis=0)
         s_uJ = us - jnp.einsum("i,ijk->jk", w, U)
         s_xJ = xs - jnp.einsum("i,ijk->jk", w, X)
 
         # Compute the dynamics-related score
-        F = vmap_residual(X, U)
+        Y = jax.vmap(flatten)(X, U)
+        r = vmap_flat_residual(Y)
+
+        y = flatten(xs, us)
+        J = jax.jacrev(flat_dynamics_residual)(y)
+        H = J.T @ J + 1e0 * jnp.eye(J.shape[1])
+
+        F = jnp.sum(jnp.square(r), axis=1)
         best = jnp.argmin(F)
-        s_uF = us - U[best]
-        s_xF = xs - X[best]
+        s_F = Y[best]
 
         # Update the control tape
-        us = us - 0.1 * s_uF - 0.1 * s_uJ
-        xs = xs - 0.1 * s_xF - 0.1 * s_xJ
+        y = flatten(xs, us)
+        # y = y - 0.01 * s_F
+        y = y - jnp.linalg.solve(H, s_F)
+        xs, us = unflatten(y)
 
         if i % print_every == 0 or i == num_iters - 1:
-            J = jit_cost(xs, us)
+            L = jit_cost(xs, us)
             F = jnp.sum(jnp.square(jit_residual(xs, us)))
             print(
-                f"Iteration {i}, cost {J:.4f}, "
+                f"Iteration {i}, cost {L:.4f}, "
                 f"dynamics {F:.4f}, sigma {sigma:.4f}"
             )
             sigma = sigma * 0.99
@@ -305,17 +331,18 @@ def plot_vector_field() -> None:
 
 if __name__ == "__main__":
     fig, ax = plt.subplots(2, 1)
+    x0 = jnp.array([3.0, 1.0])
 
-    # X, U = shooting_gradient_descent(jnp.array([3.0, -1.0]), 50)
-    # X, U = shooting_mppi(jnp.array([3.0, 1.0]), 50)
-    X, U = direct_mppi(jnp.array([3.0, 1.0]), 50)
+    # X, U = shooting_gradient_descent(x0, 50)
+    # X, U = shooting_mppi(x0, 50)
+    X, U = direct_mppi(x0, 50)
 
     # Plot the state trajectory
     plt.sca(ax[0])
     plot_vector_field()
     plt.plot(X[:, 0], X[:, 1], "o-")
 
-    X_rollout = rollout(jnp.array([3.0, 1.0]), U)[0]
+    X_rollout = rollout(x0, U)[0]
     plt.plot(X_rollout[:, 0], X_rollout[:, 1], "o-")
 
     # Plot the control tape over time
