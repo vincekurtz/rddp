@@ -65,7 +65,7 @@ class PendulumEnv(PipelineEnv):
         # Forward dynamics
         theta = state.pipeline_state.q[0]
         theta_dot = state.pipeline_state.qd[0]
-        tau = 5 * action[0]
+        tau = action[0]
         mgl = self.mass * self.gravity * self.length
         ml2 = self.mass * self.length**2
         theta_ddot = (tau - mgl * jnp.sin(theta - jnp.pi)) / ml2
@@ -78,12 +78,16 @@ class PendulumEnv(PipelineEnv):
 
         # Observation
         obs = jnp.array([jnp.cos(new_theta), jnp.sin(new_theta), new_theta_dot])
-        obs_upright = jnp.array([1.0, 0.0, 0.0])
 
         # Reward
         input_cost = tau**2
-        state_cost = (obs - obs_upright).dot(obs - obs_upright)
-        reward = -(0.1 * input_cost + state_cost)
+        theta_error = jnp.sin(new_theta) ** 2 + (jnp.cos(new_theta) - 1.0) ** 2
+        theta_cost = theta_error
+        theta_dot_cost = new_theta_dot**2
+
+        reward = -(
+            0.1 * theta_cost + 0.01 * theta_dot_cost + 0.001 * input_cost
+        )
 
         return state.replace(
             pipeline_state=new_pipeline_state,

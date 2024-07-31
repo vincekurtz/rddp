@@ -21,7 +21,7 @@ HORIZON = 20
 
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    rng = jax.random.PRNGKey(1)
+    rng = jax.random.PRNGKey(0)
     prob = OptimalControlProblem(PendulumEnv(), HORIZON)
 
     rng, reset_rng = jax.random.split(rng)
@@ -109,12 +109,15 @@ def deploy_trained_model(
     prob = OptimalControlProblem(PendulumEnv(), num_steps=HORIZON)
 
     def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
-        """Do a rollout from an observation, and return observations."""
+        """Do a rollout from an observation, and return states."""
+        theta = jnp.arctan2(y0[1], y0[0])
+        theta_dot = y0[2]
+
         x0 = prob.env.reset(rng)
         x0 = x0.tree_replace(
             {
-                "pipeline_state.q": jnp.array([y0[0]]),
-                "pipeline_state.qd": jnp.array([y0[1]]),
+                "pipeline_state.q": jnp.array([theta]),
+                "pipeline_state.qd": jnp.array([theta_dot]),
                 "obs": y0,
             }
         )
@@ -181,6 +184,8 @@ def deploy_trained_model(
             plt.plot(
                 Xs[i, -1, :, 0], Xs[i, -1, :, 1], "o-", color="blue", alpha=0.5
             )
+            # Last time step is in red
+            plt.plot(Xs[i, -1, -1, 0], Xs[i, -1, -1, 1], "o-", color="red")
         plt.show()
 
     # Animate the trajectory generation process
