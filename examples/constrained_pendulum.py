@@ -145,7 +145,7 @@ def shooting_mppi(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 5000
+    num_iters = 10_000
     print_every = 100
     temperature = 0.01
     sigma = 0.1
@@ -198,10 +198,10 @@ def direct_mppi(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 5000
-    print_every = 100
+    num_iters = 50_000
+    print_every = 1000
     temperature = 0.01
-    sigma = 0.1
+    sigma = 1.0
     num_samples = 128
 
     # Objective functions
@@ -226,8 +226,8 @@ def direct_mppi(
 
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
-    us = 0.0 * jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
-    xs = 0.0 * jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
+    us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
+    xs = jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
 
     # Optimize
     for i in range(num_iters):
@@ -257,7 +257,11 @@ def direct_mppi(
         if i % print_every == 0 or i == num_iters - 1:
             J = jit_cost(xs, us)
             F = jnp.sum(jnp.square(jit_residual(xs, us)))
-            print(f"Iteration {i}, cost {J}, dynamics {F}")
+            print(
+                f"Iteration {i}, cost {J:.4f}, "
+                f"dynamics {F:.4f}, sigma {sigma:.4f}"
+            )
+            sigma = sigma * 0.99
 
     xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
     return xs, us
@@ -310,6 +314,9 @@ if __name__ == "__main__":
     plt.sca(ax[0])
     plot_vector_field()
     plt.plot(X[:, 0], X[:, 1], "o-")
+
+    X_rollout = rollout(jnp.array([3.0, 1.0]), U)[0]
+    plt.plot(X_rollout[:, 0], X_rollout[:, 1], "o-")
 
     # Plot the control tape over time
     plt.sca(ax[1])
