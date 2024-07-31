@@ -6,7 +6,7 @@
 #
 ##
 
-from typing import Sequence
+from typing import Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -54,8 +54,46 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     theta_dot = x[1]
     tau = jnp.tanh(u)[0]  # enforces input limits
 
+    # Error based on sin and cos of angle
+    theta_error = jnp.sin(theta) ** 2 + (jnp.cos(theta) - 1.0) ** 2
+
     # Cost
-    return 1.0 * theta**2 + 0.1 * theta_dot**2 + 0.01 * tau**2
+    return 0.1 * theta_error + 0.01 * theta_dot**2 + 0.001 * tau**2
+
+
+def rollout(
+    x0: jnp.ndarray, us: jnp.ndarray
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Do a rollout of the pendulum.
+
+    Args:
+        x0: initial state of the pendulum
+        us: control sequence
+
+    Returns:
+        the total cost and state trajectory
+    """
+
+    def scan_fn(carry: Tuple, u: jnp.ndarray):
+        x, J = carry
+        x = f(x, u)
+        J += cost(x, u)
+        return (x, J), x
+
+    (_, J), X = jax.lax.scan(scan_fn, (x0, 0.0), us)
+    return X, J
+
+
+def shooting_gradient_descent(x0: jnp.ndarray, horizon: int) -> jnp.ndarray:
+    """Do simpling single-shooting gradient descent.
+
+    Args:
+        x0: initial state of the pendulum
+        horizon: number of time steps to plan over
+
+    Returns:
+        the optimal state trajectory
+    """
 
 
 def make_meshgrid(
@@ -95,8 +133,14 @@ def plot_vector_field() -> None:
     cbar = plt.colorbar()
     cbar.set_label("Cost")
 
-    plt.show()
-
 
 if __name__ == "__main__":
     plot_vector_field()
+
+    U = jnp.zeros((20, 1))
+    X, J = rollout(jnp.array([3.0, -1.0]), U)
+    print(J)
+
+    plt.plot(X[:, 0], X[:, 1], "o-")
+
+    plt.show()
