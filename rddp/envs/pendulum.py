@@ -8,14 +8,15 @@ from brax.envs.base import PipelineEnv, State
 class PendulumEnv(PipelineEnv):
     """An inverted pendulum must swing up and balance."""
 
-    def __init__(self):
+    def __init__(self, horizon: int):
         """Initialize the pendulum environment."""
         self.mass = 1.0
         self.length = 1.0
         self.gravity = 9.81
+        self.horizon = horizon
 
         self.position_limits = (-1.5 * jnp.pi, 1.5 * jnp.pi)
-        self.velocity_limits = (-10.0, 10.0)
+        self.velocity_limits = (-8.0, 8.0)
 
     def reset(self, rng: jax.random.PRNGKey) -> State:
         """Reset to a new initial state.
@@ -44,12 +45,12 @@ class PendulumEnv(PipelineEnv):
             xd=base.Motion.create(vel=jnp.zeros(3)),
             contact=None,
         )
-        obs = jnp.array([jnp.cos(pos), jnp.sin(pos), vel])
         return State(
             pipeline_state=pipeline_state,
-            obs=obs,
+            obs=jnp.array([pos, vel]),
             reward=0.0,
             done=0.0,
+            info={"step": 0},
         )
 
     def step(self, state: State, action: jnp.ndarray) -> State:
@@ -65,7 +66,7 @@ class PendulumEnv(PipelineEnv):
         # Forward dynamics
         theta = state.pipeline_state.q[0]
         theta_dot = state.pipeline_state.qd[0]
-        tau = 5 * action[0]
+        tau = action[0]
         mgl = self.mass * self.gravity * self.length
         ml2 = self.mass * self.length**2
         theta_ddot = (tau - mgl * jnp.sin(theta - jnp.pi)) / ml2
@@ -76,25 +77,34 @@ class PendulumEnv(PipelineEnv):
             qd=jnp.array([new_theta_dot]),
         )
 
+        state.info["step"] += 1
+
         # Observation
-        obs = jnp.array([jnp.cos(new_theta), jnp.sin(new_theta), new_theta_dot])
-        obs_upright = jnp.array([1.0, 0.0, 0.0])
+        obs = jnp.array([new_theta, new_theta_dot])
 
         # Reward
-        input_cost = tau**2
-        state_cost = (obs - obs_upright).dot(obs - obs_upright)
-        reward = -(0.1 * input_cost + state_cost)
+        running_cost = 0.001 * tau**2
+        terminal_cost = jnp.where(
+            state.info["step"] >= self.horizon,
+            10 * theta**2 + 10 * theta_dot**2,
+            0.0,
+        )
+        reward = -running_cost - terminal_cost
+
+        # Termination
+        done = jnp.where(state.info["step"] > self.horizon, 1.0, 0.0)
 
         return state.replace(
             pipeline_state=new_pipeline_state,
             obs=obs,
             reward=reward,
+            done=done,
         )
 
     @property
     def observation_size(self) -> int:
         """Returns the size of the observation."""
-        return 3
+        return 2
 
     @property
     def action_size(self) -> int:

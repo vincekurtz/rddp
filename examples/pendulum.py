@@ -21,8 +21,8 @@ HORIZON = 20
 
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
-    rng = jax.random.PRNGKey(1)
-    prob = OptimalControlProblem(PendulumEnv(), HORIZON)
+    rng = jax.random.PRNGKey(0)
+    prob = OptimalControlProblem(PendulumEnv(HORIZON), HORIZON)
 
     rng, reset_rng = jax.random.split(rng)
     x0 = prob.env.reset(reset_rng)
@@ -30,10 +30,7 @@ def solve_with_gradient_descent() -> None:
 
     prob.env.plot_scenario()
     _, states = prob.rollout(x0, U)
-    q = jnp.array([states.pipeline_state.q[i, 0] for i in range(HORIZON + 1)])
-    v = jnp.array([states.pipeline_state.qd[i, 0] for i in range(HORIZON + 1)])
-    X = jnp.stack([q, v], axis=-1)
-    plt.plot(X[:, 0], X[:, 1], "o-")
+    plt.plot(states.obs[:, 0], states.obs[:, 1], "o-")
     plt.show()
 
 
@@ -43,18 +40,18 @@ def generate_dataset(plot: bool = True) -> None:
     save_path = "/tmp/pendulum"
 
     # Problem setup
-    prob = OptimalControlProblem(PendulumEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(PendulumEnv(HORIZON), HORIZON)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
-        starting_noise_level=0.5,
+        num_noise_levels=500,
+        starting_noise_level=1.0,
         num_steps=100,
-        step_size=0.01,
-        noise_injection_level=1.0,
+        step_size=0.001,
+        noise_injection_level=0.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
-        num_initial_states=256,
-        num_rollouts_per_data_point=128,
+        num_initial_states=1,
+        num_rollouts_per_data_point=1024,
         save_every=100,
         save_path=save_path,
     )
@@ -106,7 +103,7 @@ def deploy_trained_model(
 ) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = OptimalControlProblem(PendulumEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(PendulumEnv(HORIZON), num_steps=HORIZON)
 
     def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
         """Do a rollout from an observation, and return observations."""
@@ -119,10 +116,7 @@ def deploy_trained_model(
             }
         )
         cost, X = prob.rollout(x0, u)
-
-        q = jnp.array([X.pipeline_state.q[i, 0] for i in range(HORIZON + 1)])
-        v = jnp.array([X.pipeline_state.qd[i, 0] for i in range(HORIZON + 1)])
-        return cost, jnp.stack([q, v], axis=-1)
+        return cost, X.obs
 
     # Load the trained score network
     with open("/tmp/pendulum_score_model.pkl", "rb") as f:
