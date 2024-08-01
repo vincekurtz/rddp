@@ -279,10 +279,10 @@ def direct_gradient(
     return xs, us
 
 
-def direct_mppi(  # noqa: PLR0915
+def direct_sampling(  # noqa: PLR0915
     x0: jnp.ndarray, horizon: int
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Do constrained MPPI.
+    """Do direct optimization with a sampling-based gradient approximation.
 
     Args:
         x0: initial state of the pendulum
@@ -296,10 +296,10 @@ def direct_mppi(  # noqa: PLR0915
     # Parameters
     num_iters = 5000
     print_every = 100
-    sigma = 0.1
+    sigma = 0.01
     mu = 10.0
     num_rollouts = 64
-    temperature = 1.0
+    alpha = 0.01
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -344,26 +344,24 @@ def direct_mppi(  # noqa: PLR0915
         return objective(y) + lmbda.T @ c + 0.5 * mu * c.T @ c
 
     @jax.jit
-    def mppi_step(
+    def estimate_gradient(
         y: jnp.ndarray,
         lmbda: jnp.ndarray,
         mu: float,
         sigma: float,
         rng: jax.random.PRNGKey,
     ) -> jnp.ndarray:
-        """Do a single step of MPPI."""
+        """Zero-order gradient estimation of the Lagrangian."""
         rng, noise_rng = jax.random.split(rng)
         noise = sigma * jax.random.normal(noise_rng, (num_rollouts, y.shape[0]))
 
         Y = y + noise
         L = jax.vmap(lagrangian, in_axes=(0, None, None))(Y, lmbda, mu)
-        best = jnp.argmin(L)
-        # return Y[best]
-        Lmin = L[best]
 
-        w = jnp.exp(-1.0 / temperature * (L - Lmin))
-        w /= jnp.sum(w, axis=0)
-        return y - jnp.einsum("i,ij->j", w, Y)
+        ell = lagrangian(y, lmbda, mu)
+        grad = jnp.einsum("i,ij->j", L - ell, noise)
+        grad /= num_rollouts * sigma**2
+        return grad
 
     jit_constraints = jax.jit(constraints)
 
@@ -378,10 +376,10 @@ def direct_mppi(  # noqa: PLR0915
         y = flatten(xs, us)
 
         c = jit_constraints(y)
-        lmbda += 0.01 * mu * c
+        lmbda += alpha * mu * c
 
-        rng, mppi_rng = jax.random.split(rng)
-        y -= mppi_step(y, lmbda, mu, sigma, mppi_rng)
+        rng, grad_rng = jax.random.split(rng)
+        y -= alpha * estimate_gradient(y, lmbda, mu, sigma, grad_rng)
 
         xs, us = unflatten(y)
 
@@ -440,7 +438,7 @@ if __name__ == "__main__":
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
     # X, U = direct_gradient(x0, 50)
-    X, U = direct_mppi(x0, 20)
+    X, U = direct_sampling(x0, 50)
 
     # Plot the state trajectory
     plt.sca(ax[0])
