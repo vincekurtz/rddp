@@ -381,11 +381,15 @@ def direct_sampling(  # noqa: PLR0915
         rng, grad_rng = jax.random.split(rng)
         y -= alpha * estimate_gradient(y, lmbda, mu, sigma, grad_rng)
 
+        rng, noise_rng = jax.random.split(rng)
+        y += sigma * jax.random.normal(noise_rng, y.shape)
+        sigma *= 0.999
+
         xs, us = unflatten(y)
 
         if i % print_every == 0 or i == num_iters - 1:
             J = objective(y)
-            g = jnp.sum(jnp.square(constraints(y)))
+            g = jnp.mean(jnp.square(constraints(y)))
             print(
                 f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}, "
                 f"sigma {sigma:.4f}"
