@@ -55,16 +55,15 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     theta_dot = x[1]
 
     # Input limits
-    u_max = 1.0
-    u_min = -1.0
-
-    u_max_cost = -0.1 * jnp.log(u_max - u)[0]
-    u_min_cost = -0.1 * jnp.log(u - u_min)[0]
+    max_err = jnp.maximum(1.0 - u[0], 1e-8)  # avoid nans in log
+    min_err = jnp.maximum(u[0] + 1.0, 1e-8)
+    u_max_cost = -0.1 * jnp.log(max_err)
+    u_min_cost = -0.1 * jnp.log(min_err)
 
     return (
-        0.1 * theta**2
-        + 0.1 * theta_dot**2
-        + 0.00 * u[0] ** 2
+        0.0 * theta**2
+        + 0.0 * theta_dot**2
+        + 0.01 * u[0] ** 2
         + u_max_cost
         + u_min_cost
     )
@@ -456,8 +455,8 @@ if __name__ == "__main__":
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    X, U = direct_gradient(x0, 30)
-    # X, U = direct_sampling(x0, 30)
+    # X, U = direct_gradient(x0, 50)
+    X, U = direct_sampling(x0, 30)
 
     # Plot the state trajectory
     plt.sca(ax[0])
