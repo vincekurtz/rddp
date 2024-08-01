@@ -25,7 +25,8 @@ def f(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     """
     theta = x[0]
     theta_dot = x[1]
-    tau = jnp.tanh(u)[0]  # enforces input limits
+    # tau = jnp.tanh(u)[0]  # enforces input limits
+    tau = u[0]
 
     # Mass, length, gravity
     m = 0.5
@@ -52,7 +53,7 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     # Angle and angular velocity
     theta = x[0]
     theta_dot = x[1]
-    return 0.0 * theta**2 + 0.0 * theta_dot**2 + 0.01 * u[0] ** 2
+    return 0.1 * theta**2 + 0.1 * theta_dot**2 + 0.00 * u[0] ** 2
 
 
 def terminal_cost(x: jnp.ndarray) -> jnp.ndarray:
@@ -437,12 +438,12 @@ def plot_vector_field() -> None:
 
 if __name__ == "__main__":
     fig, ax = plt.subplots(2, 1)
-    x0 = jnp.array([3.0, 1.0])
+    x0 = jnp.array([3.1, 0.0])
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    # X, U = direct_gradient(x0, 50)
-    X, U = direct_sampling(x0, 50)
+    X, U = direct_gradient(x0, 30)
+    # X, U = direct_sampling(x0, 50)
 
     # Plot the state trajectory
     plt.sca(ax[0])
@@ -454,7 +455,7 @@ if __name__ == "__main__":
 
     # Plot the control tape over time
     plt.sca(ax[1])
-    plt.plot(jnp.tanh(U))
+    plt.plot(U)
     plt.xlabel("Time step")
     plt.ylabel("Control torque")
     plt.ylim(-1.1, 1.1)
