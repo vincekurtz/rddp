@@ -251,7 +251,7 @@ def direct_gradient(
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
     us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
-    xs = jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
+    xs = jax.random.uniform(x_rng, (horizon, 2), minval=-6.0, maxval=6.0)
     lmbda = jnp.zeros(horizon * 2)  # Lagrange multipliers
 
     # Optimize
@@ -262,13 +262,13 @@ def direct_gradient(
         y -= alpha * dL
 
         c = jit_constraints(y)
-        lmbda += mu * c
+        lmbda += alpha * mu * c
 
         xs, us = unflatten(y)
 
         if i % print_every == 0 or i == num_iters - 1:
             J = objective(y)
-            g = jnp.sum(jnp.square(constraints(y)))
+            g = jnp.mean(jnp.square(constraints(y)))
             grad = jnp.linalg.norm(dL)
             print(
                 f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}, "
