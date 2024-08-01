@@ -55,10 +55,10 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     theta_dot = x[1]
 
     # Input limits
-    max_err = jnp.maximum(1.0 - u[0], 1e-8)  # avoid nans in log
-    min_err = jnp.maximum(u[0] + 1.0, 1e-8)
-    u_max_cost = -0.1 * jnp.log(max_err)
-    u_min_cost = -0.1 * jnp.log(min_err)
+    max_err = jnp.maximum(1.0 - u[0], 1e-4)  # avoid nans in log
+    min_err = jnp.maximum(u[0] + 1.0, 1e-4)
+    u_max_cost = -0.01 * jnp.log(max_err)
+    u_min_cost = -0.01 * jnp.log(min_err)
 
     return (
         0.0 * theta**2
@@ -400,6 +400,8 @@ def direct_sampling(  # noqa: PLR0915
         # sigma *= 0.999
 
         xs, us = unflatten(y)
+
+        us = jnp.clip(us, -1.0, 1.0)  # project to feasible set
 
         if i % print_every == 0 or i == num_iters - 1:
             J = objective(y)
