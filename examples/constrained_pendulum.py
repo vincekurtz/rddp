@@ -280,6 +280,8 @@ def direct_gradient(
 
         xs, us = unflatten(y)
 
+        us = jnp.clip(us, -1.0, 1.0)  # project to feasible set
+
         if i % print_every == 0 or i == num_iters - 1:
             J = objective(y)
             g = jnp.mean(jnp.square(constraints(y)))
@@ -457,7 +459,7 @@ if __name__ == "__main__":
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    # X, U = direct_gradient(x0, 50)
+    # X, U = direct_gradient(x0, 30)
     X, U = direct_sampling(x0, 30)
 
     # Plot the state trajectory
