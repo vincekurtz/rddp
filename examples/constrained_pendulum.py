@@ -201,7 +201,7 @@ def direct_gradient(
     num_iters = 5000
     print_every = 100
     alpha = 0.01
-    mu = 1.0
+    mu = 10.0
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -257,6 +257,7 @@ def direct_gradient(
     # Optimize
     for i in range(num_iters):
         y = flatten(xs, us)
+
         L, dL = jit_langrangian(y, lmbda, mu)
         y -= alpha * dL
 
@@ -273,6 +274,119 @@ def direct_gradient(
                 f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}, "
                 f"lagrangian {L:.4f}, grad {grad:.4f}"
             )
+
+    xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+    return xs, us
+
+
+def direct_mppi(  # noqa: PLR0915
+    x0: jnp.ndarray, horizon: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Do constrained MPPI.
+
+    Args:
+        x0: initial state of the pendulum
+        horizon: number of time steps to plan over
+
+    Returns:
+        the optimal state trajectory and control sequence
+    """
+    rng = jax.random.PRNGKey(0)
+
+    # Parameters
+    num_iters = 5000
+    print_every = 100
+    sigma = 0.01
+    mu = 100.0
+    num_rollouts = 256
+    temperature = 0.1
+
+    # Helper functions
+    def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """The total cost of a trajectory."""
+        xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+        running = jax.vmap(cost)(xs[:-1], us)
+        terminal = terminal_cost(xs[-1])
+        return jnp.sum(running) + terminal
+
+    def dynamics_residual(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """Residual of the dynamics."""
+        xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+        x_pred = jax.vmap(f)(xs[:-1], us)
+        x_next = xs[1:]
+        return (x_pred - x_next).flatten()
+
+    def flatten(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
+        """Flatten all decision variables into a vector."""
+        return jnp.concatenate([xs.flatten(), us.flatten()])
+
+    def unflatten(y: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """Unflatten a vector into states and controls."""
+        xs = y[: horizon * 2].reshape((horizon, 2))
+        us = y[horizon * 2 :].reshape((horizon, 1))
+        return xs, us
+
+    def objective(y: jnp.ndarray) -> jnp.ndarray:
+        """The total cost of a trajectory."""
+        xs, us = unflatten(y)
+        return cost_fn(xs, us)
+
+    def constraints(y: jnp.ndarray) -> jnp.ndarray:
+        """The dynamics constraints."""
+        xs, us = unflatten(y)
+        return dynamics_residual(xs, us)
+
+    def lagrangian(
+        y: jnp.ndarray, lmbda: jnp.ndarray, mu: float
+    ) -> jnp.ndarray:
+        """The Lagrangian."""
+        c = constraints(y)
+        return objective(y) + 0.0 * lmbda.T @ c + 0.5 * mu * c.T @ c
+
+    @jax.jit
+    def mppi_step(
+        y: jnp.ndarray,
+        lmbda: jnp.ndarray,
+        mu: float,
+        sigma: float,
+        rng: jax.random.PRNGKey,
+    ) -> jnp.ndarray:
+        """Do a single step of MPPI."""
+        rng, noise_rng = jax.random.split(rng)
+        noise = sigma * jax.random.normal(noise_rng, (num_rollouts, y.shape[0]))
+
+        Y = y + noise
+        L = jax.vmap(lagrangian, in_axes=(0, None, None))(Y, lmbda, mu)
+        best = jnp.argmin(L)
+        # return Y[best]
+        Lmin = L[best]
+
+        w = jnp.exp(-1.0 / temperature * (L - Lmin))
+        w /= jnp.sum(w, axis=0)
+        return jnp.einsum("i,ij->j", w, Y)
+
+    jit_constraints = jax.jit(constraints)
+
+    # Define initial guesses
+    rng, u_rng, x_rng = jax.random.split(rng, 3)
+    us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
+    xs = jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
+    lmbda = jnp.zeros(horizon * 2)  # Lagrange multipliers
+
+    # Optimize
+    for i in range(num_iters):
+        y = flatten(xs, us)
+        y = mppi_step(y, lmbda, mu, sigma, rng)
+
+        c = jit_constraints(y)
+        lmbda += mu * c
+
+        xs, us = unflatten(y)
+
+        if i % print_every == 0 or i == num_iters - 1:
+            J = objective(y)
+            g = jnp.sum(jnp.square(constraints(y)))
+            print(f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}")
 
     xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
     return xs, us
@@ -320,7 +434,8 @@ if __name__ == "__main__":
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    X, U = direct_gradient(x0, 50)
+    # X, U = direct_gradient(x0, 20)
+    X, U = direct_mppi(x0, 20)
 
     # Plot the state trajectory
     plt.sca(ax[0])
