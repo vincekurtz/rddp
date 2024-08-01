@@ -237,22 +237,29 @@ def direct_gradient(
         xs, us = unflatten(y)
         return dynamics_residual(xs, us)
 
-    def lagrangian(y: jnp.ndarray) -> jnp.ndarray:
+    def lagrangian(y: jnp.ndarray, lmbda: jnp.ndarray) -> jnp.ndarray:
         """The Lagrangian."""
-        return objective(y) + 1e2 * jnp.sum(jnp.square(constraints(y)))
+        c = constraints(y)
+        return objective(y) + c.T @ c + lmbda.T @ c
 
-    jit_langrangian = jax.jit(jax.value_and_grad(lagrangian))
+    jit_langrangian = jax.jit(jax.value_and_grad(lagrangian, argnums=0))
+    jit_constraints = jax.jit(constraints)
 
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
     us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
     xs = jax.random.uniform(x_rng, (horizon, 2), minval=-5.0, maxval=5.0)
+    lmbda = jnp.zeros(horizon * 2)  # Lagrange multipliers
 
     # Optimize
     for i in range(num_iters):
         y = flatten(xs, us)
-        L, dL = jit_langrangian(y)
+        L, dL = jit_langrangian(y, lmbda)
         y -= alpha * dL
+
+        c = jit_constraints(y)
+        lmbda += 0.1 * c
+
         xs, us = unflatten(y)
 
         if i % print_every == 0 or i == num_iters - 1:
