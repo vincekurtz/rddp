@@ -53,7 +53,21 @@ def cost(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     # Angle and angular velocity
     theta = x[0]
     theta_dot = x[1]
-    return 0.1 * theta**2 + 0.1 * theta_dot**2 + 0.00 * u[0] ** 2
+
+    # Input limits
+    u_max = 1.0
+    u_min = -1.0
+
+    u_max_cost = -0.1 * jnp.log(u_max - u)[0]
+    u_min_cost = -0.1 * jnp.log(u - u_min)[0]
+
+    return (
+        0.1 * theta**2
+        + 0.1 * theta_dot**2
+        + 0.00 * u[0] ** 2
+        + u_max_cost
+        + u_min_cost
+    )
 
 
 def terminal_cost(x: jnp.ndarray) -> jnp.ndarray:
@@ -251,7 +265,7 @@ def direct_gradient(
 
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
-    us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
+    us = jax.random.uniform(u_rng, (horizon, 1), minval=-0.5, maxval=0.5)
     xs = jax.random.uniform(x_rng, (horizon, 2), minval=-6.0, maxval=6.0)
     lmbda = jnp.zeros(horizon * 2)  # Lagrange multipliers
 
@@ -368,7 +382,7 @@ def direct_sampling(  # noqa: PLR0915
 
     # Define initial guesses
     rng, u_rng, x_rng = jax.random.split(rng, 3)
-    us = jax.random.uniform(u_rng, (horizon, 1), minval=-1.0, maxval=1.0)
+    us = jax.random.uniform(u_rng, (horizon, 1), minval=-0.5, maxval=0.5)
     xs = jax.random.uniform(x_rng, (horizon, 2), minval=-6.0, maxval=6.0)
     lmbda = jnp.zeros(horizon * 2)  # Lagrange multipliers
 
@@ -443,7 +457,7 @@ if __name__ == "__main__":
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
     X, U = direct_gradient(x0, 30)
-    # X, U = direct_sampling(x0, 50)
+    # X, U = direct_sampling(x0, 30)
 
     # Plot the state trajectory
     plt.sca(ax[0])
