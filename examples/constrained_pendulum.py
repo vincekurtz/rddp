@@ -198,10 +198,10 @@ def direct_gradient(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 3000
+    num_iters = 5000
     print_every = 100
     alpha = 0.01
-    mu = 10.0
+    mu = 1.0
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -243,7 +243,7 @@ def direct_gradient(
     ) -> jnp.ndarray:
         """The Lagrangian."""
         c = constraints(y)
-        return objective(y) + mu * c.T @ c + lmbda.T @ c
+        return objective(y) + lmbda.T @ c + 0.5 * mu * c.T @ c
 
     jit_langrangian = jax.jit(jax.value_and_grad(lagrangian, argnums=0))
     jit_constraints = jax.jit(constraints)
@@ -261,7 +261,7 @@ def direct_gradient(
         y -= alpha * dL
 
         c = jit_constraints(y)
-        lmbda += alpha * mu * c
+        lmbda += mu * c
 
         xs, us = unflatten(y)
 
@@ -318,10 +318,9 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(2, 1)
     x0 = jnp.array([3.0, 1.0])
 
-    # X, U = shooting_gradient_descent(x0, 20)
+    # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    # X, U = direct_mppi(x0, 20)
-    X, U = direct_gradient(x0, 20)
+    X, U = direct_gradient(x0, 50)
 
     # Plot the state trajectory
     plt.sca(ax[0])
