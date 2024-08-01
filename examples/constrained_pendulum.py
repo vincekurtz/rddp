@@ -198,9 +198,10 @@ def direct_gradient(
     rng = jax.random.PRNGKey(0)
 
     # Parameters
-    num_iters = 5000
+    num_iters = 3000
     print_every = 100
-    alpha = 0.001
+    alpha = 0.01
+    mu = 10.0
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -237,10 +238,12 @@ def direct_gradient(
         xs, us = unflatten(y)
         return dynamics_residual(xs, us)
 
-    def lagrangian(y: jnp.ndarray, lmbda: jnp.ndarray) -> jnp.ndarray:
+    def lagrangian(
+        y: jnp.ndarray, lmbda: jnp.ndarray, mu: float
+    ) -> jnp.ndarray:
         """The Lagrangian."""
         c = constraints(y)
-        return objective(y) + c.T @ c + lmbda.T @ c
+        return objective(y) + mu * c.T @ c + lmbda.T @ c
 
     jit_langrangian = jax.jit(jax.value_and_grad(lagrangian, argnums=0))
     jit_constraints = jax.jit(constraints)
@@ -254,11 +257,11 @@ def direct_gradient(
     # Optimize
     for i in range(num_iters):
         y = flatten(xs, us)
-        L, dL = jit_langrangian(y, lmbda)
+        L, dL = jit_langrangian(y, lmbda, mu)
         y -= alpha * dL
 
         c = jit_constraints(y)
-        lmbda += 0.1 * c
+        lmbda += alpha * mu * c
 
         xs, us = unflatten(y)
 
