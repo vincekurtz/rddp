@@ -297,9 +297,9 @@ def direct_mppi(  # noqa: PLR0915
     num_iters = 5000
     print_every = 100
     sigma = 0.1
-    mu = 1.0
-    num_rollouts = 256
-    temperature = 0.01
+    mu = 10.0
+    num_rollouts = 64
+    temperature = 1.0
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -377,11 +377,11 @@ def direct_mppi(  # noqa: PLR0915
     for i in range(num_iters):
         y = flatten(xs, us)
 
+        c = jit_constraints(y)
+        lmbda += 0.01 * mu * c
+
         rng, mppi_rng = jax.random.split(rng)
         y -= mppi_step(y, lmbda, mu, sigma, mppi_rng)
-
-        c = jit_constraints(y)
-        lmbda += sigma**2 * mu * c
 
         xs, us = unflatten(y)
 
@@ -439,7 +439,7 @@ if __name__ == "__main__":
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    # X, U = direct_gradient(x0, 20)
+    # X, U = direct_gradient(x0, 50)
     X, U = direct_mppi(x0, 20)
 
     # Plot the state trajectory
