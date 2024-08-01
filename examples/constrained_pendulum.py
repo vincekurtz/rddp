@@ -296,10 +296,10 @@ def direct_mppi(  # noqa: PLR0915
     # Parameters
     num_iters = 5000
     print_every = 100
-    sigma = 0.01
-    mu = 100.0
+    sigma = 0.1
+    mu = 1.0
     num_rollouts = 256
-    temperature = 0.1
+    temperature = 0.01
 
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
@@ -341,7 +341,7 @@ def direct_mppi(  # noqa: PLR0915
     ) -> jnp.ndarray:
         """The Lagrangian."""
         c = constraints(y)
-        return objective(y) + 0.0 * lmbda.T @ c + 0.5 * mu * c.T @ c
+        return objective(y) + lmbda.T @ c + 0.5 * mu * c.T @ c
 
     @jax.jit
     def mppi_step(
@@ -363,7 +363,7 @@ def direct_mppi(  # noqa: PLR0915
 
         w = jnp.exp(-1.0 / temperature * (L - Lmin))
         w /= jnp.sum(w, axis=0)
-        return jnp.einsum("i,ij->j", w, Y)
+        return y - jnp.einsum("i,ij->j", w, Y)
 
     jit_constraints = jax.jit(constraints)
 
@@ -376,17 +376,22 @@ def direct_mppi(  # noqa: PLR0915
     # Optimize
     for i in range(num_iters):
         y = flatten(xs, us)
-        y = mppi_step(y, lmbda, mu, sigma, rng)
+
+        rng, mppi_rng = jax.random.split(rng)
+        y -= mppi_step(y, lmbda, mu, sigma, mppi_rng)
 
         c = jit_constraints(y)
-        lmbda += mu * c
+        lmbda += sigma**2 * mu * c
 
         xs, us = unflatten(y)
 
         if i % print_every == 0 or i == num_iters - 1:
             J = objective(y)
             g = jnp.sum(jnp.square(constraints(y)))
-            print(f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}")
+            print(
+                f"Iteration {i}, cost {J:.4f}, dynamics {g:.4f}, "
+                f"sigma {sigma:.4f}"
+            )
 
     xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
     return xs, us
