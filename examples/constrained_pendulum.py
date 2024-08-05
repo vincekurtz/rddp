@@ -29,7 +29,7 @@ def f(x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
     tau = u[0]
 
     # Mass, length, gravity
-    m = 0.5
+    m = 1.0
     g = 9.81
     l = 1.0  # noqa: E741 (ignore ambiguous variable name)
 
@@ -220,7 +220,7 @@ def direct_gradient(
     # Helper functions
     def cost_fn(xs: jnp.ndarray, us: jnp.ndarray) -> jnp.ndarray:
         """The total cost of a trajectory."""
-        xs = jnp.concatenate([jnp.array([x0]), xs], axis=0)
+        xs = jnp.vstack([x0, xs])
         running = jax.vmap(cost)(xs[:-1], us)
         terminal = terminal_cost(xs[-1])
         return jnp.sum(running) + terminal
@@ -459,8 +459,8 @@ if __name__ == "__main__":
 
     # X, U = shooting_gradient_descent(x0, 50)
     # X, U = shooting_mppi(x0, 20)
-    # X, U = direct_gradient(x0, 30)
-    X, U = direct_sampling(x0, 30)
+    X, U = direct_gradient(x0, 30)
+    # X, U = direct_sampling(x0, 30)
 
     # Plot the state trajectory
     plt.sca(ax[0])
