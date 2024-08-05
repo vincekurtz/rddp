@@ -5,10 +5,10 @@
 ##
 
 import time
+from typing import Tuple
 
 import jax
 import jax.numpy as jnp
-import Tuple
 from brax.envs.inverted_pendulum import InvertedPendulum
 
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
@@ -58,8 +58,8 @@ def generate() -> None:
     )
 
 
-def manual_rollouts() -> None:
-    """Manually simulate rollouts with brax."""
+def manual_sim() -> None:
+    """Manually just simulate, no Langevin sampling or anything."""
     num_timesteps = 600
     num_parallel_envs = 128
 
@@ -96,6 +96,70 @@ def manual_rollouts() -> None:
     )
 
 
+def manual_rollouts() -> None:
+    """Manually perform Langevin sampling."""
+    rng = jax.random.PRNGKey(0)
+
+    prob = OptimalControlProblem(InvertedPendulum(), num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        num_noise_levels=30,
+        starting_noise_level=0.1,
+        num_steps=1,
+        step_size=1.0,
+        noise_injection_level=1.0,
+    )
+    gen_options = DatasetGenerationOptions(
+        starting_temperature=1.0,
+        num_initial_states=16,
+        num_rollouts_per_data_point=8,
+        save_every=1,
+        save_path="/tmp/debug_manual_rollouts",
+    )
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+
+    rng, x_rng, u_rng = jax.random.split(rng, 3)
+    x_rng = jax.random.split(x_rng, gen_options.num_initial_states)
+    x0 = jax.vmap(jax.jit(prob.env.reset))(x_rng)
+    U = jax.random.normal(
+        u_rng,
+        (
+            gen_options.num_initial_states,
+            prob.num_steps - 1,
+            prob.env.action_size,
+        ),
+    )
+
+    jit_score = jax.jit(
+        jax.vmap(generator.estimate_noised_score, in_axes=(0, 0, None, None))
+    )
+
+    st = time.time()
+    for _ in range(
+        langevin_options.num_noise_levels * langevin_options.num_steps
+    ):
+        rng, score_rng, noise_rng = jax.random.split(rng, 3)
+        s = jit_score(x0, U, 0.1, score_rng)
+        noise = jax.random.normal(noise_rng, U.shape)
+        U += 0.01 * s + jnp.sqrt(0.02) * noise
+        jax.block_until_ready(U)
+        print(time.time() - st)
+    total_time = time.time() - st
+
+    num_timesteps = (
+        prob.num_steps
+        * langevin_options.num_noise_levels
+        * langevin_options.num_steps
+    )
+    num_parallel_envs = (
+        gen_options.num_initial_states * gen_options.num_rollouts_per_data_point
+    )
+    print(
+        f"Simulated {num_timesteps} steps across {num_parallel_envs} "
+        f"parallel envs in {total_time:.2f} seconds"
+    )
+
+
 if __name__ == "__main__":
-    generate()
-    # manual_rollouts()
+    # generate()
+    # manual_sim()
+    manual_rollouts()
