@@ -66,14 +66,6 @@ class DatasetGenerator:
         self.langevin_options = langevin_options
         self.datagen_options = datagen_options
 
-        # Ensure that we can split the dataset into equal-sized files
-        assert (
-            langevin_options.num_noise_levels % datagen_options.save_every == 0
-        )
-        self.num_saves = (
-            langevin_options.num_noise_levels // datagen_options.save_every
-        )
-
         # Save langevin sampling options, since we'll use them again when we
         # deploy the trained policy.
         save_path = Path(datagen_options.save_path)
@@ -162,8 +154,14 @@ class DatasetGenerator:
         """Add a dataset to the hdf5 file.
 
         Args:
-            dataset: The (flattened) dataset to save.
+            dataset: The dataset to save.
         """
+        # Flatten the dataset for saving
+        dataset = jax.tree.map(
+            lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
+        )
+
+        # Write the dataset to the hdf5 file
         with h5py.File(self.h5_path, "a") as f:
             y0, U, s, k, sigma = f["y0"], f["U"], f["s"], f["k"], f["sigma"]
             num_existing_data_points = y0.shape[0]
@@ -268,6 +266,11 @@ class DatasetGenerator:
         return controls + alpha * score + beta * jnp.sqrt(2 * alpha) * noise
 
     def generate(self, rng: jax.random.PRNGKey) -> DiffusionDataset:
+        """Generate a dataset of noised score values and save it to disk.
+
+        Args:
+            rng: The random number generator key.
+        """
         start_time = datetime.now()
 
         # Some useful shorthand parameters
@@ -281,9 +284,18 @@ class DatasetGenerator:
         jit_score = jax.jit(
             jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
         )
-        jit_initialize = jax.jit(self.initialize_dataset)
-        jit_update = jax.jit(self.add_to_dataset)
-        jit_step = jax.jit(
+        
+        jit_initialize = jax.jit(
+            lambda y0, U, s, k, sigma:
+            self.initialize_dataset(y0, U, s, jnp.tile(k, (N, 1)), jnp.tile(sigma, (N, 1)))
+        )
+        jit_update = jax.jit(
+            lambda dataset, y0, U, s, k, sigma:
+            self.add_to_dataset(dataset, y0, U, s, jnp.tile(
+                k, (N, 1)), jnp.tile(sigma, (N, 1)))
+        )
+            
+        jit_langevin_step = jax.jit(
             jax.vmap(self.langevin_step, in_axes=(0, 0, None, None))
         )
 
@@ -299,13 +311,9 @@ class DatasetGenerator:
         )
 
         # Initialize the dataset
-        # N.B. we tile L and sigma so each data point has a copy of the noise
-        # level and noise level index used to generate it.
         rng, score_rng = jax.random.split(rng)
         s, cost = jit_score(x0, U, sigmaL, score_rng)
-        dataset = jit_initialize(
-            x0.obs, U, s, jnp.tile(L, (N, 1)), jnp.tile(sigmaL, (N, 1))
-        )
+        dataset = jit_initialize(x0.obs, U, s, L, sigmaL)
 
         # Print some debugging infos
         print(
@@ -324,107 +332,25 @@ class DatasetGenerator:
             )
 
             # Update the control tape from the previous score
-            U = jit_step(U, s, sigma, step_rng)
+            U = jit_langevin_step(U, s, sigma, step_rng)
 
             # Compute the score estimate for the new control tape
             s, cost = jit_score(x0, U, sigma, score_rng)
 
             # Update the dataset
-            # Again we tile k and sigma to match the shape of the dataset
-            dataset = jit_update(
-                dataset,
-                x0.obs,
-                U,
-                s,
-                jnp.tile(k, (N, 1)),
-                jnp.tile(sigma, (N, 1)),
-            )
+            dataset = jit_update(dataset, x0.obs, U, s, k, sigma)
 
             print(
-                f"σₖ = {sigmaL:.4f}, "
+                f"σₖ = {sigma:.4f}, "
                 f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
                 f"time = {datetime.now() - start_time}"
             )
 
-        print(dataset.y0.shape)
-        print(dataset.U.shape)
-        print(dataset.s.shape)
-        print(dataset.k.shape)
-        print(dataset.sigma.shape)
+            if k % self.datagen_options.save_every == 0:
+                # Save what we have so far to avoid running out of memory
+                print(f"**** Saving to {self.h5_path} at k={k} ****")
+                self.save_dataset(dataset)
+                dataset = jit_initialize(x0.obs, U, s, k, sigma)
 
-    def generate_and_save(self, rng: jax.random.PRNGKey) -> None:
-        """Generate a dataset of noised score values and save it to disk.
-
-        Args:
-            rng: The random number generator key.
-        """
-        start_time = datetime.now()
-
-        # Some helper functions
-        sample_initial_state = jax.jit(jax.vmap(self.prob.env.reset))
-        langevin_sample = jax.vmap(
-            lambda x0, u, rng, noise_range: annealed_langevin_sample(
-                self.langevin_options,
-                x0,  # N.B. we assume that p(U | x₀) = p(U | y₀)
-                u,
-                self.estimate_noised_score,
-                rng,
-                noise_range,
-            ),
-            in_axes=(0, 0, 0, None),
-        )
-        rollout = jax.jit(jax.vmap(self.prob.rollout))
-        sigmaL = self.langevin_options.starting_noise_level
-
-        # Sample initial states
-        rng, state_rng = jax.random.split(rng)
-        state_rng = jax.random.split(
-            state_rng, self.datagen_options.num_initial_states
-        )
-        x0 = sample_initial_state(state_rng)
-
-        # Sample inital control tapes U ~ 𝒩(0, σ_L²)
-        rng, init_rng = jax.random.split(rng)
-        U = sigmaL * jax.random.normal(
-            init_rng,
-            (
-                self.datagen_options.num_initial_states,
-                self.prob.num_steps - 1,
-                self.prob.env.action_size,
-            ),
-        )
-
-        costs, _ = rollout(x0, U)
-        print(
-            f"σₖ = {sigmaL:.4f}, "
-            f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}, "
-            f"time = {datetime.now() - start_time}"
-        )
-
-        for i in range(self.num_saves, 0, -1):
-            start_k = i * self.datagen_options.save_every
-            end_k = (i - 1) * self.datagen_options.save_every
-
-            # Generate data with annealed Langevin sampling at the given noise
-            # levels.
-            rng, langevin_rng = jax.random.split(rng)
-            langevin_rng = jax.random.split(
-                langevin_rng, self.datagen_options.num_initial_states
-            )
-            U, dataset = langevin_sample(x0, U, langevin_rng, (start_k, end_k))
-
-            # Record only the observations y = g(x0) and flatten the dataset
-            dataset = dataset.replace(y0=dataset.y0.obs)
-            flat_data = jax.tree.map(
-                lambda x: jnp.reshape(x, (-1, *x.shape[3:])), dataset
-            )
-            self.save_dataset(flat_data)
-
-            # Print a quick performance summary
-            costs, _ = rollout(x0, U)
-            sigma = dataset.sigma[0, -1, 0, 0]  # state, noise level, step, dim
-            print(
-                f"σₖ = {sigma:.4f}, "
-                f"cost = {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}, "
-                f"time = {datetime.now() - start_time}"
-            )
+        print(f"**** Saving to {self.h5_path} ****")
+        self.save_dataset(dataset)

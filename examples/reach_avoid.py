@@ -62,9 +62,10 @@ def visualize_dataset(
         num_noise_levels: The number of noise levels in the dataset.
     """
     rng = jax.random.PRNGKey(0)
-    x0 = prob.env.reset(rng)
 
+    @jax.jit
     def get_initial_state(pos: jnp.ndarray) -> State:
+        x0 = prob.env.reset(rng)
         return x0.tree_replace({"pipeline_state.q": pos})
 
     rollout_fn = jax.jit(jax.vmap(prob.rollout))
@@ -145,7 +146,7 @@ def generate_dataset(plot: bool = False) -> None:
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested

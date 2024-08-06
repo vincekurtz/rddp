@@ -33,7 +33,7 @@ def generate() -> None:
         starting_temperature=1.0,
         num_initial_states=16,
         num_rollouts_per_data_point=8,
-        save_every=1,
+        save_every=10,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
