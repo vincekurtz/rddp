@@ -1,8 +1,7 @@
 import pickle
-from functools import partial
 from datetime import datetime
 from pathlib import Path
-from typing import Union
+from typing import Tuple, Union
 
 import h5py
 import jax
@@ -107,7 +106,7 @@ class DatasetGenerator:
         controls: jnp.ndarray,
         sigma: float,
         rng: jax.random.PRNGKey,
-    ) -> jnp.ndarray:
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Estimate the noised score s = ∇ log pₖ(U | x₀) with M rollouts.
 
         The score of the noised target distribution
@@ -132,6 +131,7 @@ class DatasetGenerator:
 
         Returns:
             The noised score estimate ŝ = σ² ∇ log pₖ(U | x₀).
+            The average cost of the rollouts
         """
         M = self.datagen_options.num_rollouts_per_data_point
         lmbda = self.datagen_options.starting_temperature * sigma**2
@@ -144,6 +144,7 @@ class DatasetGenerator:
 
         # Compute the cost of each control tape
         J, _ = jax.vmap(self.prob.rollout, in_axes=(None, 0))(x0, U_noised)
+        avg_cost = jnp.mean(J, axis=0)
         J = J - jnp.min(J, axis=0)  # normalize for better numerics
 
         # Compute importance weights
@@ -155,7 +156,7 @@ class DatasetGenerator:
         score_estimate = jnp.einsum("i,i...->...", weights, deltaU)
         score_estimate /= sigma**2
 
-        return score_estimate
+        return score_estimate, avg_cost
 
     def save_dataset(self, dataset: DiffusionDataset) -> None:
         """Add a dataset to the hdf5 file.
@@ -184,13 +185,13 @@ class DatasetGenerator:
             sigma[num_existing_data_points:] = dataset.sigma
 
     def initialize_dataset(
-            self,
-            y0: jnp.ndarray,
-            controls: jnp.ndarray,
-            score: jnp.ndarray,
-            k: int,
-            sigma: int
-        ) -> DiffusionDataset:
+        self,
+        y0: jnp.ndarray,
+        controls: jnp.ndarray,
+        score: jnp.ndarray,
+        k: int,
+        sigma: int,
+    ) -> DiffusionDataset:
         """Initialize a diffusion dataset that we can add to.
 
         Adds an extra axis to the input arrays to make it easy to stack with
@@ -210,17 +211,19 @@ class DatasetGenerator:
             y0=y0[None],
             U=controls[None],
             s=score[None],
-            k=jnp.array([[k]]),
-            sigma=jnp.array([[sigma]]),
+            k=k[None],
+            sigma=sigma[None],
         )
 
-    def add_to_dataset(self,
-                       dataset: DiffusionDataset,
-                       y0: jnp.ndarray,
-                       controls: jnp.ndarray,
-                       score: jnp.ndarray,
-                       k: int,
-                       sigma: int) -> DiffusionDataset:
+    def add_to_dataset(
+        self,
+        dataset: DiffusionDataset,
+        y0: jnp.ndarray,
+        controls: jnp.ndarray,
+        score: jnp.ndarray,
+        k: int,
+        sigma: int,
+    ) -> DiffusionDataset:
         """Append new data to the dataset.
 
         Args:
@@ -238,11 +241,17 @@ class DatasetGenerator:
             y0=jnp.concatenate([dataset.y0, y0[None]]),
             U=jnp.concatenate([dataset.U, controls[None]]),
             s=jnp.concatenate([dataset.s, score[None]]),
-            k=jnp.concatenate([dataset.k, jnp.array([[k]])]),
-            sigma=jnp.concatenate([dataset.sigma, jnp.array([[sigma]])]),
+            k=jnp.concatenate([dataset.k, k[None]]),
+            sigma=jnp.concatenate([dataset.sigma, sigma[None]]),
         )
 
-    def langevin_step(self, controls: jnp.ndarray, score: jnp.ndarray, sigma: jnp.ndarray, rng: jax.random.PRNGKey) -> jnp.ndarray:
+    def langevin_step(
+        self,
+        controls: jnp.ndarray,
+        score: jnp.ndarray,
+        sigma: jnp.ndarray,
+        rng: jax.random.PRNGKey,
+    ) -> jnp.ndarray:
         """Perform a single Langevin step on the control tape.
 
             U_new = U + αs + β√(2α)ε,
@@ -253,13 +262,14 @@ class DatasetGenerator:
             score: The score estimate s.
             rng: The random number generator key.
         """
-        alpha = self.langevin_options.step_size
+        alpha = self.langevin_options.step_size * sigma**2
         beta = self.langevin_options.noise_injection_level
-        eps = alpha * sigma**2
         noise = jax.random.normal(rng, controls.shape)
-        return controls + eps * score + beta * jnp.sqrt(2 * eps) * noise
+        return controls + alpha * score + beta * jnp.sqrt(2 * alpha) * noise
 
     def generate(self, rng: jax.random.PRNGKey) -> DiffusionDataset:
+        start_time = datetime.now()
+
         # Some useful shorthand parameters
         L = self.langevin_options.num_noise_levels
         N = self.datagen_options.num_initial_states
@@ -267,55 +277,74 @@ class DatasetGenerator:
 
         # Some helper functions
         # TODO: consider combining steps into one jitted function
-        jit_reset = jax.jit(self.prob.env.reset)
-        jit_score = jax.jit(self.estimate_noised_score)
+        jit_reset = jax.jit(jax.vmap(self.prob.env.reset))
+        jit_score = jax.jit(
+            jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
+        )
         jit_initialize = jax.jit(self.initialize_dataset)
         jit_update = jax.jit(self.add_to_dataset)
-        jit_step = jax.jit(self.langevin_step)
-        jit_cost = jax.jit(lambda x, U: self.prob.rollout(x, U)[0])
+        jit_step = jax.jit(
+            jax.vmap(self.langevin_step, in_axes=(0, 0, None, None))
+        )
 
         # Set the initial state
         rng, state_rng = jax.random.split(rng)
+        state_rng = jax.random.split(state_rng, N)
         x0 = jit_reset(state_rng)
 
         # Sample inital control tape U ~ 𝒩(0, σ_L²)
         rng, init_rng = jax.random.split(rng)
         U = sigmaL * jax.random.normal(
-            init_rng,
-            (
-                self.prob.num_steps - 1,
-                self.prob.env.action_size,
-            ),
+            init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
         )
 
         # Initialize the dataset
+        # N.B. we tile L and sigma so each data point has a copy of the noise
+        # level and noise level index used to generate it.
         rng, score_rng = jax.random.split(rng)
-        s = jit_score(x0, U, sigmaL, score_rng)
-        dataset = jit_initialize(x0.obs, U, s, L, sigmaL)
+        s, cost = jit_score(x0, U, sigmaL, score_rng)
+        dataset = jit_initialize(
+            x0.obs, U, s, jnp.tile(L, (N, 1)), jnp.tile(sigmaL, (N, 1))
+        )
 
-        # TODO: evaluate costs
-        cost = jit_cost(x0, U)
-        print(f"σₖ = {sigmaL:.4f}, cost = {cost:.4f}")
+        # Print some debugging infos
+        print(
+            f"σₖ = {sigmaL:.4f}, "
+            f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
+            f"time = {datetime.now() - start_time}"
+        )
 
         for k in range(L - 1, -1, -1):
             rng, score_rng, step_rng = jax.random.split(rng, 3)
 
             # Set the noise level σₖ
             t = (L - k) / L
-            sigma = self.langevin_options.starting_noise_level * \
-                jnp.exp(-self.langevin_options.noise_decay_rate * t)
+            sigma = self.langevin_options.starting_noise_level * jnp.exp(
+                -self.langevin_options.noise_decay_rate * t
+            )
 
-            # Compute the score estimate
-            s = jit_score(x0, U, sigma, score_rng)
-
-            # Update the dataset
-            dataset = jit_update(dataset, x0.obs, U, s, k, sigma)
-
-            # Update the control tape
+            # Update the control tape from the previous score
             U = jit_step(U, s, sigma, step_rng)
 
-            cost = jit_cost(x0, U)
-            print(f"σₖ = {sigma:.4f}, cost = {cost:.4f}")
+            # Compute the score estimate for the new control tape
+            s, cost = jit_score(x0, U, sigma, score_rng)
+
+            # Update the dataset
+            # Again we tile k and sigma to match the shape of the dataset
+            dataset = jit_update(
+                dataset,
+                x0.obs,
+                U,
+                s,
+                jnp.tile(k, (N, 1)),
+                jnp.tile(sigma, (N, 1)),
+            )
+
+            print(
+                f"σₖ = {sigmaL:.4f}, "
+                f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
+                f"time = {datetime.now() - start_time}"
+            )
 
         print(dataset.y0.shape)
         print(dataset.U.shape)
