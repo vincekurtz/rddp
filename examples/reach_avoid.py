@@ -238,7 +238,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
         U, data = annealed_langevin_sample(
             options=options,
             y0=x0.obs,
-            u_init=U_guess,
+            controls=U_guess,
             score_fn=lambda y, u, sigma, rng: net.apply(
                 params, y, u, jnp.array([sigma])
             ),
@@ -255,9 +255,9 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-    U = data.U[:, :, -1, :]
-    sigma = data.sigma[:, :, -1]
+    y0 = data.y0
+    U = data.U
+    sigma = data.sigma
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
     print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 
@@ -279,7 +279,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
         def update(i: int):
             j, i = divmod(i, options.num_noise_levels)
             j = j % num_samples
-            ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
+            ax.set_title(f"σₖ={sigma[0, i, 0, 0]:.4f}")
             path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 

@@ -61,99 +61,75 @@ class AnnealedLangevinOptions:
 def annealed_langevin_sample(
     options: AnnealedLangevinOptions,
     y0: jnp.ndarray,
-    u_init: jnp.ndarray,
+    controls: jnp.ndarray,
     score_fn: Callable[
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
     ],
     rng: jax.random.PRNGKey,
-    noise_range: Tuple[int, int] = None,
-) -> Tuple[jnp.ndarray, DiffusionDataset]:
+) -> jnp.ndarray:
     """Generate a sample from the target distribution p(U | y₀).
 
     Annealed Langevin samples intermediate distributions
 
         pₖ(U | y₀) = ∫ p(Ũ | y₀)N(Ũ;U,σₖ²)dŨ
 
-    with a decreasing sequence of noise levels σₖ. At each level, we sample
-    from pₖ(U | y₀) using Langevin dynamics:
+    with a decreasing sequence of noise levels σₖ. At each step, we update the
+    control sequences Uᵏ as
 
-        Uⁱ⁺¹ = Uⁱ + ε ŝ(y₀, Uⁱ, σₖ) + √(2ε) zⁱ,
+        Uᵏ⁺¹ = Uᵏ + αŝ(y₀, Uⁱ, σₖ) + β√(2α)ε,
+        ε ~ N(0, I).
 
     where ŝ(y₀, Uⁱ, σₖ) is an estimate of the score ∇ log pₖ(U | y₀),
-    ε = ασₖ² is the step size, and zⁱ ~ N(0, I) is Gaussian noise.
+    α ∝ σₖ² is the step size, and β is the noise injection level.
 
     Args:
         options: The annealed Langevin options defining α, σₖ, etc.
         y0: The initial observation y₀ that we condition on.
-        u_init: An initial control sequence, typically U ~ N(0, σ_L²).
+        controls: An initial control sequence, typically U ~ N(0, σ_L²).
         score_fn: A (possibly stochastic) score estimate function ŝ(y₀, U, σ).
         rng: The random number generator key.
-        noise_range: The range of noise levels to sample from. If None, sample
-            from L to 0. This option is useful for dataset generation, where we
-            want to save out to a file during the annealing process.
+
+    Returns:
+        The final sample U⁰ ~ p(U | y₀).
+        A dataset containing the intermediate control sequences Uᵏ scores, etc.
     """
     L = options.num_noise_levels
     sigmaL = options.starting_noise_level
-
-    if noise_range is None:
-        start_step, end_step = L, 0
-    else:
-        start_step, end_step = noise_range
-        assert start_step >= end_step, "start_step should be >= end_step"
-        assert start_step <= L, "start_step should be <= L"
-        assert end_step >= 0, "end_step should be >= 0"
-
-    N = options.num_steps
-    alpha = options.step_size
     beta = options.noise_injection_level
 
-    def langevin_step(carry: Tuple, i: int):
-        """Perform a single Langevin sampling step at the k-th noise level.
+    def step_fn(carry: Tuple, k: int):
+        """Update Uᵏ⁺¹ = Uᵏ + αŝ(y₀, Uⁱ, σₖ) + β√(2α)ε."""
+        U, rng = carry
 
-        Return the new control tape Uₖⁱ⁺¹ and the score estimate ŝₖⁱ.
-        """
-        U, sigma, k, rng = carry
-        rng, score_rng, z_rng = jax.random.split(rng, 3)
-        eps = alpha * sigma**2
+        # Set the noise level σₖ and step size α
+        t = (L - k) / L
+        sigma = sigmaL * jnp.exp(-options.noise_decay_rate * t)
+        alpha = options.step_size * sigma**2
 
-        # Langevin dynamics based on the estimated score
-        z = jax.random.normal(z_rng, U.shape)
+        # Estimate the score ∇ log pₖ(U | y₀)
+        rng, score_rng = jax.random.split(rng)
         s = score_fn(y0, U, sigma, score_rng)
-        U_new = U + eps * s + beta * jnp.sqrt(2 * eps) * z
 
-        # Record training data
-        data = DiffusionDataset(
+        # Take a Langevin step
+        rng, noise_rng = jax.random.split(rng)
+        noise = jax.random.normal(noise_rng, U.shape)
+        U_new = U + alpha * s + beta * jnp.sqrt(2 * alpha) * noise
+
+        # Save intermediate values in a diffusion dataset
+        dataset = DiffusionDataset(
             y0=y0,
             U=U,
             s=s,
-            k=jnp.array([k]),
-            sigma=jnp.array([sigma]),
+            k=jnp.full((U.shape[0], 1), k),
+            sigma=jnp.full((U.shape[0], 1), sigma),
         )
 
-        return (U_new, sigma, k, rng), data
+        return (U_new, rng), dataset
 
-    def annealed_langevin_step(carry: Tuple, k: int):
-        """Generate N samples at the k-th noise level."""
-        U, rng = carry
-
-        # Set the noise level σₖ
-        t = (L - k) / L
-        sigma = sigmaL * jnp.exp(-options.noise_decay_rate * t)
-
-        # Run Langevin dynamics for N steps, recording score estimates
-        # along the way
-        rng, langevin_rng = jax.random.split(rng)
-        (U, _, _, _), data = jax.lax.scan(
-            langevin_step, (U, sigma, k, langevin_rng), jnp.arange(N)
-        )
-
-        return (U, rng), data
-
-    rng, sampling_rng = jax.random.split(rng)
     (U, _), dataset = jax.lax.scan(
-        annealed_langevin_step,
-        (u_init, sampling_rng),
-        jnp.arange(start_step - 1, end_step - 1, -1),
+        step_fn,
+        (controls, rng),
+        jnp.arange(L - 1, -1, -1),
     )
 
     return U, dataset

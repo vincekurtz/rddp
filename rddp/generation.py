@@ -242,7 +242,7 @@ class DatasetGenerator:
     ) -> jnp.ndarray:
         """Perform a single Langevin step on the control tape.
 
-            U_new = U + αs + β√(2α)ε,
+            Uᵏ⁺¹ = Uᵏ + αs + β√(2α)ε,
             ε ~ N(0, I).
 
         Note that the step size α is scaled by the noise level σₖ, as
