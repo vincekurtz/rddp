@@ -31,7 +31,7 @@ def generate() -> None:
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
-        num_initial_states=16,
+        num_initial_states=1,
         num_rollouts_per_data_point=8,
         save_every=1,
         save_path=save_path,
@@ -40,7 +40,8 @@ def generate() -> None:
 
     rng, gen_rng = jax.random.split(rng)
     st = time.time()
-    generator.generate_and_save(gen_rng)
+    # generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     gen_time = time.time() - st
 
     num_timesteps = (
@@ -160,6 +161,6 @@ def manual_rollouts() -> None:
 
 
 if __name__ == "__main__":
-    # generate()
+    generate()
     # manual_sim()
-    manual_rollouts()
+    # manual_rollouts()
