@@ -25,7 +25,6 @@ def generate() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=30,
         starting_noise_level=0.1,
-        num_steps=1,
         step_size=1.0,
         noise_injection_level=1.0,
     )
@@ -33,7 +32,7 @@ def generate() -> None:
         starting_temperature=1.0,
         num_initial_states=16,
         num_rollouts_per_data_point=8,
-        save_every=10,
+        save_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -44,11 +43,7 @@ def generate() -> None:
     generator.generate(gen_rng)
     gen_time = time.time() - st
 
-    num_timesteps = (
-        prob.num_steps
-        * langevin_options.num_noise_levels
-        * langevin_options.num_steps
-    )
+    num_timesteps = prob.num_steps * langevin_options.num_noise_levels
     num_parallel_envs = (
         gen_options.num_initial_states * gen_options.num_rollouts_per_data_point
     )

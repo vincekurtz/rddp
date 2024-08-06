@@ -10,11 +10,7 @@ from brax.envs.base import State
 from flax.struct import dataclass
 
 from rddp.ocp import OptimalControlProblem
-from rddp.utils import (
-    AnnealedLangevinOptions,
-    DiffusionDataset,
-    annealed_langevin_sample,
-)
+from rddp.utils import AnnealedLangevinOptions, DiffusionDataset
 
 
 @dataclass
@@ -182,18 +178,8 @@ class DatasetGenerator:
             k[num_existing_data_points:] = dataset.k
             sigma[num_existing_data_points:] = dataset.sigma
 
-    def initialize_dataset(
-        self,
-        y0: jnp.ndarray,
-        controls: jnp.ndarray,
-        score: jnp.ndarray,
-        k: int,
-        sigma: int,
-    ) -> DiffusionDataset:
-        """Initialize a diffusion dataset that we can add to.
-
-        Adds an extra axis to the input arrays to make it easy to stack with
-        new data later.
+    def initialize_dataset(self) -> DiffusionDataset:
+        """Initialize an empty diffusion dataset that we can add to later.
 
         Args:
             y0: The initial observation.
@@ -205,12 +191,16 @@ class DatasetGenerator:
         Returns:
             The initialized dataset.
         """
+        N = self.datagen_options.num_initial_states
+        ny = self.prob.env.observation_size
+        nu = self.prob.env.action_size
+        T = self.prob.num_steps - 1
         return DiffusionDataset(
-            y0=y0[None],
-            U=controls[None],
-            s=score[None],
-            k=k[None],
-            sigma=sigma[None],
+            y0=jnp.zeros((0, N, ny)),
+            U=jnp.zeros((0, N, T, nu)),
+            s=jnp.zeros((0, N, T, nu)),
+            k=jnp.zeros((0, N, 1), dtype=jnp.int32),
+            sigma=jnp.zeros((0, N, 1)),
         )
 
     def add_to_dataset(
@@ -255,9 +245,14 @@ class DatasetGenerator:
             U_new = U + αs + β√(2α)ε,
             ε ~ N(0, I).
 
+        Note that the step size α is scaled by the noise level σₖ, as
+        recommended by Song and Ermon, "Generative Modeling by Estimating
+        Gradients of the Data Distribution", NeurIPS 2019.
+
         Args:
             controls: The control tape U.
             score: The score estimate s.
+            sigma: The noise level σₖ.
             rng: The random number generator key.
         """
         alpha = self.langevin_options.step_size * sigma**2
@@ -279,22 +274,17 @@ class DatasetGenerator:
         sigmaL = self.langevin_options.starting_noise_level
 
         # Some helper functions
-        # TODO: consider combining steps into one jitted function
         jit_reset = jax.jit(jax.vmap(self.prob.env.reset))
         jit_score = jax.jit(
             jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
         )
-        
-        jit_initialize = jax.jit(
-            lambda y0, U, s, k, sigma:
-            self.initialize_dataset(y0, U, s, jnp.tile(k, (N, 1)), jnp.tile(sigma, (N, 1)))
-        )
+        jit_initialize = jax.jit(self.initialize_dataset)
         jit_update = jax.jit(
-            lambda dataset, y0, U, s, k, sigma:
-            self.add_to_dataset(dataset, y0, U, s, jnp.tile(
-                k, (N, 1)), jnp.tile(sigma, (N, 1)))
+            lambda dataset, y0, u, s, k, sigma: self.add_to_dataset(
+                dataset, y0, u, s, jnp.tile(k, (N, 1)), jnp.tile(sigma, (N, 1))
+            )
         )
-            
+
         jit_langevin_step = jax.jit(
             jax.vmap(self.langevin_step, in_axes=(0, 0, None, None))
         )
@@ -304,20 +294,18 @@ class DatasetGenerator:
         state_rng = jax.random.split(state_rng, N)
         x0 = jit_reset(state_rng)
 
-        # Sample inital control tape U ~ 𝒩(0, σ_L²)
-        rng, init_rng = jax.random.split(rng)
+        # Sample inital control tape U ~ 𝒩(0, σ_L²) and compute its score
+        rng, init_rng, score_rng = jax.random.split(rng, 3)
         U = sigmaL * jax.random.normal(
             init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
         )
-
-        # Initialize the dataset
-        rng, score_rng = jax.random.split(rng)
         s, cost = jit_score(x0, U, sigmaL, score_rng)
-        dataset = jit_initialize(x0.obs, U, s, L, sigmaL)
 
-        # Print some debugging infos
+        # Initialize an empty dataset
+        dataset = jit_initialize()
+
         print(
-            f"σₖ = {sigmaL:.4f}, "
+            f"k = {L}, σₖ = {sigmaL:.4f}, "
             f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
             f"time = {datetime.now() - start_time}"
         )
@@ -341,16 +329,12 @@ class DatasetGenerator:
             dataset = jit_update(dataset, x0.obs, U, s, k, sigma)
 
             print(
-                f"σₖ = {sigma:.4f}, "
+                f"k = {k}, σₖ = {sigma:.4f}, "
                 f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
                 f"time = {datetime.now() - start_time}"
             )
 
             if k % self.datagen_options.save_every == 0:
-                # Save what we have so far to avoid running out of memory
                 print(f"**** Saving to {self.h5_path} at k={k} ****")
                 self.save_dataset(dataset)
-                dataset = jit_initialize(x0.obs, U, s, k, sigma)
-
-        print(f"**** Saving to {self.h5_path} ****")
-        self.save_dataset(dataset)
+                dataset = jit_initialize()
