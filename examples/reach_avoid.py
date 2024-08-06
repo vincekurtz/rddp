@@ -63,7 +63,6 @@ def visualize_dataset(
     """
     rng = jax.random.PRNGKey(0)
 
-    @jax.jit
     def get_initial_state(pos: jnp.ndarray) -> State:
         x0 = prob.env.reset(rng)
         return x0.tree_replace({"pipeline_state.q": pos})
@@ -128,10 +127,9 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
+        num_noise_levels=1000,
         starting_noise_level=0.1,
-        num_steps=100,
-        step_size=0.01,
+        step_size=0.03,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(

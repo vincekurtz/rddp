@@ -43,7 +43,6 @@ class AnnealedLangevinOptions:
     Attributes:
         num_noise_levels: The number of noise levels L.
         starting_noise_level: The starting noise level σ_L.
-        num_steps: The number of Langevin steps to take at each noise level, N.
         step_size: The Langevin step size α.
         noise_injection_level: The noise injection level for each Langevin step.
             A value of 1.0 corresponds to the standard Langevin dynamics, while
@@ -54,7 +53,6 @@ class AnnealedLangevinOptions:
 
     num_noise_levels: int
     starting_noise_level: int
-    num_steps: int
     step_size: float
     noise_injection_level: float = 1.0
     noise_decay_rate: float = 4.0
