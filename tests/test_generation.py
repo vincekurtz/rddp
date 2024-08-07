@@ -104,13 +104,14 @@ def test_save_dataset() -> None:
 
     # Make some random fake data and save it
     num_samples = 100
-    rng, Y_rng, U_rng, s_rng, sigma_rng, k_rng = jax.random.split(rng, 6)
+    rng, Y_rng, U_rng, s_rng, sigma_rng, k_rng, c_rng = jax.random.split(rng, 7)
     Y = jax.random.uniform(Y_rng, (num_samples, 20, 2))
     U = jax.random.uniform(U_rng, (num_samples, 19, 2))
     s = jax.random.uniform(s_rng, (num_samples, 19, 2))
     sigma = jax.random.uniform(sigma_rng, (num_samples, 1))
     k = jax.random.randint(k_rng, (num_samples, 1), 0, 100)
-    dataset = DiffusionDataset(Y=Y, U=U, s=s, sigma=sigma, k=k)
+    cost = jax.random.uniform(c_rng, (num_samples, 1))
+    dataset = DiffusionDataset(Y=Y, U=U, s=s, sigma=sigma, k=k, cost=cost)
     generator.save_dataset(dataset)
 
     # Check that the hdf5 file was updated
@@ -122,6 +123,7 @@ def test_save_dataset() -> None:
         assert h5_dataset.s.shape == (num_samples, 19, 2)
         assert h5_dataset.sigma.shape == (num_samples, 1)
         assert h5_dataset.k.shape == (num_samples, 1)
+        assert h5_dataset.cost.shape == (num_samples, 1)
 
         # Check that slicing on the hdf5 dataset works
         partial_dataset = h5_dataset[2:14]
@@ -130,6 +132,7 @@ def test_save_dataset() -> None:
         assert jnp.all(partial_dataset.s == s[2:14])
         assert jnp.all(partial_dataset.sigma == sigma[2:14])
         assert jnp.all(partial_dataset.k == k[2:14])
+        assert jnp.all(partial_dataset.cost == cost[2:14])
 
     # Remove the temporary directory
     for p in local_dir.iterdir():
@@ -209,6 +212,7 @@ def test_langevin() -> None:
         h5_dataset = HDF5DiffusionDataset(f)
         U_gen = jnp.array(h5_dataset.U)
         y0 = h5_dataset.Y[-1, 0]
+        generated_dataset = h5_dataset[:]
 
     # Do langevin sampling with the utils function
     # N.B. the awkward series of rng splits ensures that we get the same
@@ -229,13 +233,20 @@ def test_langevin() -> None:
     def score_fn(x, u, sigma, rng):  # noqa: ANN001 (skip type annotations)
         return generator.estimate_noised_score(x, u, sigma, rng)[0]
 
-    U, _ = annealed_langevin_sample(langevin_options, x0, U, score_fn, rng)
+    U, langevin_dataset = annealed_langevin_sample(
+        langevin_options, x0, U, score_fn, rng
+    )
 
     langevin_cost = prob.rollout(x0, U)[0]
     generated_cost = prob.rollout(x0, U_gen[-1])[0]
 
     assert jnp.allclose(U, U_gen[-1], atol=1e-2)
     assert jnp.allclose(langevin_cost, generated_cost, atol=1e-2)
+
+    assert langevin_dataset.s.shape == generated_dataset.s.shape
+    assert langevin_dataset.U.shape == generated_dataset.U.shape
+    assert langevin_dataset.sigma.shape == generated_dataset.sigma.shape
+    assert langevin_dataset.k.shape == generated_dataset.k.shape
 
     # Remove the temporary directory
     for p in local_dir.iterdir():

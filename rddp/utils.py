@@ -117,13 +117,15 @@ def annealed_langevin_sample(
         U_new = U + alpha * s + beta * jnp.sqrt(2 * alpha) * noise
 
         # Save intermediate values in a diffusion dataset
+        # Note that we don't have access to the cost J(U | y₀) or the
+        # observation sequence Y here.
         dataset = DiffusionDataset(
-            Y=y0,  # store the initial observation y₀ since we don't have Y
+            Y=None,
             U=U,
             s=s,
-            k=jnp.full((U.shape[0], 1), k),
-            sigma=jnp.full((U.shape[0], 1), sigma),
-            cost=jnp.zeros(1, 1),  # placeholder since we don't know the cost
+            k=jnp.expand_dims(k, -1),
+            sigma=jnp.expand_dims(sigma, -1),
+            cost=None,
         )
 
         return (U_new, rng), dataset
