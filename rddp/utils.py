@@ -100,6 +100,7 @@ def annealed_langevin_sample(
     def step_fn(carry: Tuple, k: int):
         """Update Uᵏ⁺¹ = Uᵏ + αŝ(y₀, Uⁱ, σₖ) + β√(2α)ε."""
         U, rng = carry
+        rng, score_rng, noise_rng = jax.random.split(rng, 3)
 
         # Set the noise level σₖ and step size α
         t = (L - k) / L
@@ -107,11 +108,9 @@ def annealed_langevin_sample(
         alpha = options.step_size * sigma**2
 
         # Estimate the score ∇ log pₖ(U | y₀)
-        rng, score_rng = jax.random.split(rng)
         s = score_fn(y0, U, sigma, score_rng)
 
         # Take a Langevin step
-        rng, noise_rng = jax.random.split(rng)
         noise = jax.random.normal(noise_rng, U.shape)
         U_new = U + alpha * s + beta * jnp.sqrt(2 * alpha) * noise
 
