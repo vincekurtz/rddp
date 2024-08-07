@@ -17,6 +17,7 @@ class DiffusionDataset:
         s: The noised score estimate ŝ = ∇ log pₖ(U | y₀).
         k: The noise level index k.
         sigma: The noise level σₖ.
+        cost: The total cost J(U | y₀) of the rollout.
     """
 
     Y: jnp.ndarray
@@ -24,6 +25,7 @@ class DiffusionDataset:
     s: jnp.ndarray
     k: jnp.ndarray
     sigma: jnp.ndarray
+    cost: jnp.ndarray
 
 
 @dataclass
@@ -121,6 +123,7 @@ def annealed_langevin_sample(
             s=s,
             k=jnp.full((U.shape[0], 1), k),
             sigma=jnp.full((U.shape[0], 1), sigma),
+            cost=jnp.zeros(1, 1),  # placeholder since we don't know the cost
         )
 
         return (U_new, rng), dataset
@@ -166,6 +169,7 @@ def sample_dataset(
         s=dataset.s[idxs],
         k=dataset.k[idxs],
         sigma=dataset.sigma[idxs],
+        cost=dataset.cost[idxs],
     )
 
 
@@ -194,6 +198,7 @@ class HDF5DiffusionDataset:
         self.s = np.array(file["s"], dtype=jnp.float32)
         self.sigma = np.array(file["sigma"], dtype=jnp.float32)
         self.k = np.array(file["k"], dtype=jnp.int32)
+        self.cost = np.array(file["cost"], dtype=jnp.float32)
 
         # Size checks
         self.num_data_points = self.Y.shape[0]
@@ -203,6 +208,7 @@ class HDF5DiffusionDataset:
         assert self.k.shape[0] == self.num_data_points
         assert self.U.shape == self.s.shape
         assert self.sigma.shape == self.k.shape
+        assert self.cost.shape == (self.num_data_points, 1)
 
     def __len__(self) -> int:
         """Return the number of data points in the dataset."""
@@ -227,4 +233,5 @@ class HDF5DiffusionDataset:
             s=jnp.asarray(self.s[idx], dtype=jnp.float32),
             sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),
             k=jnp.asarray(self.k[idx], dtype=jnp.int32),
+            cost=jnp.asarray(self.cost[idx], dtype=jnp.float32),
         )

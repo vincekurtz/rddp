@@ -86,6 +86,9 @@ class DatasetGenerator:
             f.create_dataset(
                 "sigma", (0, 1), maxshape=(None, 1), dtype="float32"
             )
+            f.create_dataset(
+                "cost", (0, 1), maxshape=(None, 1), dtype="float32"
+            )
 
     def estimate_noised_score(
         self,
@@ -164,7 +167,14 @@ class DatasetGenerator:
         """
         # Write the dataset to the hdf5 file
         with h5py.File(self.h5_path, "a") as f:
-            Y, U, s, k, sigma = f["Y"], f["U"], f["s"], f["k"], f["sigma"]
+            Y, U, s, k, sigma, cost = (
+                f["Y"],
+                f["U"],
+                f["s"],
+                f["k"],
+                f["sigma"],
+                f["cost"],
+            )
             num_existing_data_points = Y.shape[0]
             num_new_data_points = dataset.Y.shape[0]
             new_size = num_existing_data_points + num_new_data_points
@@ -175,6 +185,7 @@ class DatasetGenerator:
             s.resize(new_size, axis=0)
             k.resize(new_size, axis=0)
             sigma.resize(new_size, axis=0)
+            cost.resize(new_size, axis=0)
 
             # Write the new data
             Y[num_existing_data_points:] = dataset.Y
@@ -182,6 +193,7 @@ class DatasetGenerator:
             s[num_existing_data_points:] = dataset.s
             k[num_existing_data_points:] = dataset.k
             sigma[num_existing_data_points:] = dataset.sigma
+            cost[num_existing_data_points:] = dataset.cost
 
     def allocate_dataset(self) -> DiffusionDataset:
         """Initialize an empty diffusion dataset that we can add to later.
@@ -200,6 +212,7 @@ class DatasetGenerator:
             s=jnp.zeros((M, N, T - 1, nu)),
             k=jnp.zeros((M, N, 1), dtype=jnp.int32),
             sigma=jnp.zeros((M, N, 1)),
+            cost=jnp.zeros((M, N, 1)),
         )
 
     def add_to_dataset(
@@ -208,8 +221,9 @@ class DatasetGenerator:
         observations: jnp.ndarray,
         controls: jnp.ndarray,
         score: jnp.ndarray,
-        k: int,
-        sigma: int,
+        k: jnp.ndarray,
+        sigma: jnp.ndarray,
+        cost: jnp.ndarray,
         i: int,
     ) -> DiffusionDataset:
         """Add new data to the dataset in the i-th slot.
@@ -221,6 +235,7 @@ class DatasetGenerator:
             score: The noised score estimate.
             k: The noise level index.
             sigma: The noise level.
+            cost: The total cost J(U | y₀) of the rollout.
             i: The index of the dataset to update
 
         Returns:
@@ -231,7 +246,8 @@ class DatasetGenerator:
         s = dataset.s.at[i].set(score)
         k = dataset.k.at[i].set(k)
         sigma = dataset.sigma.at[i].set(sigma)
-        return dataset.replace(Y=Y, U=U, s=s, k=k, sigma=sigma)
+        cost = dataset.cost.at[i].set(cost)
+        return dataset.replace(Y=Y, U=U, s=s, k=k, sigma=sigma, cost=cost)
 
     def langevin_step(
         self,
@@ -278,13 +294,14 @@ class DatasetGenerator:
             jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
         )
         jit_update = jax.jit(
-            lambda dataset, y, u, s, k, sigma, i: self.add_to_dataset(
+            lambda dataset, y, u, s, k, sigma, cost, i: self.add_to_dataset(
                 dataset,
                 y,
                 u,
                 s,
                 jnp.tile(k, (N, 1)),
                 jnp.tile(sigma, (N, 1)),
+                jnp.expand_dims(cost, -1),
                 i,
             ),
             donate_argnums=(0,),  # in-place update of the dataset
@@ -322,7 +339,7 @@ class DatasetGenerator:
             s, cost, Y = jit_score(x0, U, sigma, score_rng)
 
             # Update the dataset
-            dataset = jit_update(dataset, Y, U, s, k, sigma, i)
+            dataset = jit_update(dataset, Y, U, s, k, sigma, cost, i)
             i += 1
 
             # Update the control tape from the previous score

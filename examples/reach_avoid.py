@@ -88,26 +88,23 @@ def visualize_dataset(
         sigma = subset.sigma[0, 0]
         ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
 
+    # Plot costs across iterations
+    plt.figure()
+    for k in range(0, num_noise_levels, 50):
+        iter = num_noise_levels - k
+
+        # Get a random subset of the data at this noise level
+        rng, sample_rng = jax.random.split(rng)
+        subset = sample_dataset(dataset, k, 32, sample_rng)
+
+        # Compute the cost of each trajectory and add it to the plot
+        costs = subset.cost
+        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
+    plt.xlabel("Iteration (L - k)")
+    plt.ylabel("Cost J(U, x₀)")
+    plt.yscale("log")
+
     plt.show()
-
-    # # Plot costs at each iteration
-    # plt.figure()
-    # for k in range(num_noise_levels):
-    #     iter = num_noise_levels - k
-
-    #     # Get a random subset of the data at this noise level
-    #     rng, sample_rng = jax.random.split(rng)
-    #     subset = sample_dataset(dataset, k, 32, sample_rng)
-
-    #     # Compute the cost of each trajectory and add it to the plot
-    #     x0s = jax.vmap(get_initial_state)(subset.y0)
-    #     costs, _ = rollout_fn(x0s, subset.U)
-    #     plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
-    # plt.xlabel("Iteration (L - k)")
-    # plt.ylabel("Cost J(U, x₀)")
-    # plt.yscale("log")
-
-    # plt.show()
 
 
 def generate_dataset(plot: bool = False) -> None:
