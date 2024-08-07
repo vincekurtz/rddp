@@ -42,21 +42,23 @@ class OptimalControlProblem:
             The state trajectory [x₀, x₁, ..., x_T].
         """
 
-        def scan_fn(carry: Tuple, t: int):
+        def scan_fn(carry: Tuple, u: jnp.ndarray):
             x, cost = carry
-            u = self.u_max * jnp.tanh(control_tape[t] / self.u_max)
+            u = self.u_max * jnp.tanh(u / self.u_max)
+            cost -= x.reward * (1 - x.done)
             x_next = self.env.step(x, u)
-            cost -= x_next.reward * (1 - x_next.done)
             return (x_next, cost), x
 
         (final_state, total_cost), state_trajectory = jax.lax.scan(
-            scan_fn, (initial_state, 0.0), jnp.arange(self.num_steps)
+            scan_fn, (initial_state, 0.0), control_tape
         )
 
+        # Account for the last state x_T
         state_trajectory = jax.tree.map(
             lambda x, y: jnp.concatenate([x, jnp.expand_dims(y, 0)]),
             state_trajectory,
             final_state,
         )
+        total_cost -= final_state.reward * (1 - final_state.done)
 
         return total_cost, state_trajectory
