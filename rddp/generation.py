@@ -154,11 +154,6 @@ class DatasetGenerator:
         Args:
             dataset: The dataset to save.
         """
-        # Flatten the dataset for saving
-        dataset = jax.tree.map(
-            lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
-        )
-
         # Write the dataset to the hdf5 file
         with h5py.File(self.h5_path, "a") as f:
             y0, U, s, k, sigma = f["y0"], f["U"], f["s"], f["k"], f["sigma"]
@@ -338,5 +333,9 @@ class DatasetGenerator:
                 )
 
             if k % self.datagen_options.save_every == 0:
-                self.save_dataset(dataset)
+                # Flatten the dataset for saving
+                flat_dataset = jax.tree.map(
+                    lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
+                )
+                self.save_dataset(flat_dataset)
                 dataset = jit_initialize()
