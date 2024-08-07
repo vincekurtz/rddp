@@ -64,6 +64,12 @@ class DatasetGenerator:
         self.langevin_options = langevin_options
         self.datagen_options = datagen_options
 
+        # Determine the size of the dataset that we'll hold in GPU memory
+        # before saving out to disc.
+        assert (
+            langevin_options.num_noise_levels % datagen_options.save_every == 0
+        ), "The number of noise levels must be divisible by the save frequency."
+
         # Save langevin sampling options, since we'll use them again when we
         # deploy the trained policy.
         save_path = Path(datagen_options.save_path)
@@ -175,7 +181,7 @@ class DatasetGenerator:
             k[num_existing_data_points:] = dataset.k
             sigma[num_existing_data_points:] = dataset.sigma
 
-    def initialize_dataset(self) -> DiffusionDataset:
+    def allocate_dataset(self) -> DiffusionDataset:
         """Initialize an empty diffusion dataset that we can add to later.
 
         Args:
@@ -188,16 +194,17 @@ class DatasetGenerator:
         Returns:
             The initialized dataset.
         """
+        M = self.datagen_options.save_every
         N = self.datagen_options.num_initial_states
         ny = self.prob.env.observation_size
         nu = self.prob.env.action_size
         T = self.prob.num_steps - 1
         return DiffusionDataset(
-            y0=jnp.zeros((0, N, ny)),
-            U=jnp.zeros((0, N, T, nu)),
-            s=jnp.zeros((0, N, T, nu)),
-            k=jnp.zeros((0, N, 1), dtype=jnp.int32),
-            sigma=jnp.zeros((0, N, 1)),
+            y0=jnp.zeros((M, N, ny)),
+            U=jnp.zeros((M, N, T, nu)),
+            s=jnp.zeros((M, N, T, nu)),
+            k=jnp.zeros((M, N, 1), dtype=jnp.int32),
+            sigma=jnp.zeros((M, N, 1)),
         )
 
     def add_to_dataset(
@@ -208,8 +215,9 @@ class DatasetGenerator:
         score: jnp.ndarray,
         k: int,
         sigma: int,
+        i: int,
     ) -> DiffusionDataset:
-        """Append new data to the dataset.
+        """Add new data to the dataset in the i-th slot.
 
         Args:
             dataset: The existing dataset.
@@ -218,17 +226,17 @@ class DatasetGenerator:
             score: The noised score estimate.
             k: The noise level index.
             sigma: The noise level.
+            i: The index of the dataset to update
 
         Returns:
             The updated dataset.
         """
-        return dataset.replace(
-            y0=jnp.concatenate([dataset.y0, y0[None]]),
-            U=jnp.concatenate([dataset.U, controls[None]]),
-            s=jnp.concatenate([dataset.s, score[None]]),
-            k=jnp.concatenate([dataset.k, k[None]]),
-            sigma=jnp.concatenate([dataset.sigma, sigma[None]]),
-        )
+        y0 = dataset.y0.at[i].set(y0)
+        U = dataset.U.at[i].set(controls)
+        s = dataset.s.at[i].set(score)
+        k = dataset.k.at[i].set(k)
+        sigma = dataset.sigma.at[i].set(sigma)
+        return dataset.replace(y0=y0, U=U, s=s, k=k, sigma=sigma)
 
     def langevin_step(
         self,
@@ -275,13 +283,18 @@ class DatasetGenerator:
         jit_score = jax.jit(
             jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
         )
-        jit_initialize = jax.jit(self.initialize_dataset)
         jit_update = jax.jit(
-            lambda dataset, y0, u, s, k, sigma: self.add_to_dataset(
-                dataset, y0, u, s, jnp.tile(k, (N, 1)), jnp.tile(sigma, (N, 1))
-            )
+            lambda dataset, y0, u, s, k, sigma, i: self.add_to_dataset(
+                dataset,
+                y0,
+                u,
+                s,
+                jnp.tile(k, (N, 1)),
+                jnp.tile(sigma, (N, 1)),
+                i,
+            ),
+            donate_argnums=(0,),  # avoid re-allocating the dataset
         )
-
         jit_langevin_step = jax.jit(
             jax.vmap(self.langevin_step, in_axes=(0, 0, None, None))
         )
@@ -298,8 +311,8 @@ class DatasetGenerator:
         )
         s, cost = jit_score(x0, U, sigmaL, score_rng)
 
-        # Initialize an empty dataset
-        dataset = jit_initialize()
+        # Allocate the dataset
+        dataset = self.allocate_dataset()
 
         print(
             f"k = {L}, σₖ = {sigmaL:.4f}, "
@@ -307,6 +320,7 @@ class DatasetGenerator:
             f"time = {datetime.now() - start_time}"
         )
 
+        i = 0  # counter for which row of the dataset we're writing to
         for k in range(L - 1, -1, -1):
             rng, score_rng, step_rng = jax.random.split(rng, 3)
 
@@ -323,7 +337,8 @@ class DatasetGenerator:
             s, cost = jit_score(x0, U, sigma, score_rng)
 
             # Update the dataset
-            dataset = jit_update(dataset, x0.obs, U, s, k, sigma)
+            dataset = jit_update(dataset, x0.obs, U, s, k, sigma, i)
+            i += 1
 
             if k % self.datagen_options.print_every == 0:
                 print(
@@ -338,4 +353,4 @@ class DatasetGenerator:
                     lambda x: jnp.reshape(x, (-1, *x.shape[2:])), dataset
                 )
                 self.save_dataset(flat_dataset)
-                dataset = jit_initialize()
+                i = 0

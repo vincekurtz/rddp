@@ -142,7 +142,7 @@ def test_generate() -> None:
     # Create a generator
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=250 * 8,
+        num_noise_levels=2000,
         starting_noise_level=0.1,
         step_size=0.1,
     )
@@ -151,7 +151,7 @@ def test_generate() -> None:
         num_initial_states=5,
         num_rollouts_per_data_point=16,
         save_path=local_dir,
-        save_every=1,
+        save_every=500,
         print_every=100,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -174,6 +174,6 @@ def test_generate() -> None:
 
 
 if __name__ == "__main__":
-    # test_score_estimate()
-    # test_save_dataset()
+    test_score_estimate()
+    test_save_dataset()
     test_generate()
