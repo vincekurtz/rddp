@@ -151,7 +151,7 @@ def sample_dataset(
         A subset of the dataset at the given noise level.
     """
     assert dataset.k.shape == (
-        dataset.y0.shape[0],
+        dataset.Y.shape[0],
         1,
     ), "dataset should be flattened"
 
@@ -161,7 +161,7 @@ def sample_dataset(
     idxs = idxs[:num_samples]
 
     return DiffusionDataset(
-        y0=dataset.y0[idxs],
+        Y=dataset.Y[idxs],
         U=dataset.U[idxs],
         s=dataset.s[idxs],
         k=dataset.k[idxs],

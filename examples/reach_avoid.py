@@ -6,7 +6,6 @@ import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from brax.envs.base import State
 from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import ScoreMLP
@@ -63,12 +62,6 @@ def visualize_dataset(
     """
     rng = jax.random.PRNGKey(0)
 
-    def get_initial_state(pos: jnp.ndarray) -> State:
-        x0 = prob.env.reset(rng)
-        return x0.tree_replace({"pipeline_state.q": pos})
-
-    rollout_fn = jax.jit(jax.vmap(prob.rollout))
-
     noise_levels = [
         0,
         int(num_noise_levels / 4),
@@ -85,35 +78,36 @@ def visualize_dataset(
         # Get a random subset of the data at this noise level
         rng, sample_rng = jax.random.split(rng)
         subset = sample_dataset(dataset, k, 32, sample_rng)
+        obs = subset.Y
 
         # Plot the scenario and the sampled trajectories
         prob.env.plot_scenario()
-        x0s = jax.vmap(get_initial_state)(subset.y0)
-        _, Xs = rollout_fn(x0s, subset.U)  # N.B. y = x
-        px, py = Xs.pipeline_state.q[:, :, 0].T, Xs.pipeline_state.q[:, :, 1].T
+        px, py = obs[..., 0].T, obs[..., 1].T
         ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
 
         sigma = subset.sigma[0, 0]
         ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
 
-    # Plot costs at each iteration
-    plt.figure()
-    for k in range(num_noise_levels):
-        iter = num_noise_levels - k
-
-        # Get a random subset of the data at this noise level
-        rng, sample_rng = jax.random.split(rng)
-        subset = sample_dataset(dataset, k, 32, sample_rng)
-
-        # Compute the cost of each trajectory and add it to the plot
-        x0s = jax.vmap(get_initial_state)(subset.y0)
-        costs, _ = rollout_fn(x0s, subset.U)
-        plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
-    plt.xlabel("Iteration (L - k)")
-    plt.ylabel("Cost J(U, x₀)")
-    plt.yscale("log")
-
     plt.show()
+
+    # # Plot costs at each iteration
+    # plt.figure()
+    # for k in range(num_noise_levels):
+    #     iter = num_noise_levels - k
+
+    #     # Get a random subset of the data at this noise level
+    #     rng, sample_rng = jax.random.split(rng)
+    #     subset = sample_dataset(dataset, k, 32, sample_rng)
+
+    #     # Compute the cost of each trajectory and add it to the plot
+    #     x0s = jax.vmap(get_initial_state)(subset.y0)
+    #     costs, _ = rollout_fn(x0s, subset.U)
+    #     plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
+    # plt.xlabel("Iteration (L - k)")
+    # plt.ylabel("Cost J(U, x₀)")
+    # plt.yscale("log")
+
+    # plt.show()
 
 
 def generate_dataset(plot: bool = False) -> None:
@@ -127,7 +121,7 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=1000,
+        num_noise_levels=2000,
         starting_noise_level=0.1,
         step_size=0.03,
         noise_injection_level=1.0,
@@ -136,7 +130,8 @@ def generate_dataset(plot: bool = False) -> None:
         starting_temperature=1.0,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
-        save_every=100,
+        save_every=1000,
+        print_every=500,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
