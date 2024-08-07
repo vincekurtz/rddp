@@ -32,14 +32,13 @@ def generate() -> None:
         starting_temperature=1.0,
         num_initial_states=16,
         num_rollouts_per_data_point=8,
-        save_every=100,
+        save_every=30,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     rng, gen_rng = jax.random.split(rng)
     st = time.time()
-    # generator.generate_and_save(gen_rng)
     generator.generate(gen_rng)
     gen_time = time.time() - st
 
