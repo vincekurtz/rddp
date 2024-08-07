@@ -25,9 +25,8 @@ def test_score_estimate() -> None:
 
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=3,
+        num_noise_levels=10,
         starting_noise_level=0.1,
-        num_steps=4,
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
@@ -52,9 +51,10 @@ def test_score_estimate() -> None:
 
     # Estimate the score
     rng, score_estimate_rng = jax.random.split(rng)
-    s = generator.estimate_noised_score(x0, U, sigma, score_estimate_rng)
+    s, cost = generator.estimate_noised_score(x0, U, sigma, score_estimate_rng)
 
     assert s.shape == U.shape
+    assert cost.shape == ()
 
     # Gradient descent should improve the cost
     original_cost, _ = prob.rollout(x0, U)
@@ -180,5 +180,5 @@ def test_generate() -> None:
 
 if __name__ == "__main__":
     test_score_estimate()
-    test_save_dataset()
-    test_generate()
+    # test_save_dataset()
+    # test_generate()
