@@ -12,6 +12,7 @@ from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
     HDF5DiffusionDataset,
+    annealed_langevin_sample,
 )
 
 
@@ -173,7 +174,74 @@ def test_generate() -> None:
     local_dir.rmdir()
 
 
+def test_langevin() -> None:
+    """Check that we get the same results as utils.annealed_langevin_sample."""
+    # Create a temporary directory
+    local_dir = Path("_test_langevin")
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set up a problem instance
+    prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
+    langevin_options = AnnealedLangevinOptions(
+        num_noise_levels=1000,
+        starting_noise_level=0.1,
+        step_size=0.1,
+    )
+    gen_options = DatasetGenerationOptions(
+        starting_temperature=1.0,
+        num_initial_states=1,
+        num_rollouts_per_data_point=8,
+        save_path=local_dir,
+        save_every=500,
+        print_every=100,
+    )
+
+    # Do langevin sampling with our generator
+    rng = jax.random.PRNGKey(0)
+    rng, gen_rng = jax.random.split(rng)
+    generator = DatasetGenerator(prob, langevin_options, gen_options)
+    generator.generate(gen_rng)
+
+    with h5py.File(local_dir / "dataset.h5", "r") as f:
+        h5_dataset = HDF5DiffusionDataset(f)
+        U_gen = jnp.array(h5_dataset.U)
+        y0 = h5_dataset.y0[-1]
+
+    # Do langevin sampling with the utils function
+    # N.B. the awkward series of rng splits ensures that we get the same
+    # random seed for the two methods.
+    rng = jax.random.PRNGKey(0)
+    rng, langevin_rng = jax.random.split(rng)
+    rng, init_rng = jax.random.split(langevin_rng)
+    init_rng = jax.random.split(init_rng, 1)[0]
+    x0 = prob.env.reset(init_rng)
+    assert jnp.allclose(x0.obs, y0), "Initial states do not match, check rng"
+
+    rng, init_rng = jax.random.split(rng)
+    U = langevin_options.starting_noise_level * jax.random.normal(
+        init_rng, (prob.num_steps - 1, prob.env.action_size)
+    )
+    assert jnp.allclose(U, U_gen[0]), "Initial controls do not match, check rng"
+
+    def score_fn(x, u, sigma, rng):  # noqa: ANN001 (skip type annotations)
+        return generator.estimate_noised_score(x, u, sigma, rng)[0]
+
+    U, _ = annealed_langevin_sample(langevin_options, x0, U, score_fn, rng)
+
+    langevin_cost = prob.rollout(x0, U)[0]
+    generated_cost = prob.rollout(x0, U_gen[-1])[0]
+
+    assert jnp.allclose(U, U_gen[-1], atol=1e-2)
+    assert jnp.allclose(langevin_cost, generated_cost, atol=1e-2)
+
+    # Remove the temporary directory
+    for p in local_dir.iterdir():
+        p.unlink()
+    local_dir.rmdir()
+
+
 if __name__ == "__main__":
     test_score_estimate()
     test_save_dataset()
     test_generate()
+    test_langevin()

@@ -276,7 +276,6 @@ class DatasetGenerator:
         # Some useful shorthand parameters
         L = self.langevin_options.num_noise_levels
         N = self.datagen_options.num_initial_states
-        sigmaL = self.langevin_options.starting_noise_level
 
         # Some helper functions
         jit_reset = jax.jit(jax.vmap(self.prob.env.reset))
@@ -293,10 +292,11 @@ class DatasetGenerator:
                 jnp.tile(sigma, (N, 1)),
                 i,
             ),
-            donate_argnums=(0,),  # avoid re-allocating the dataset
+            donate_argnums=(0,),  # in-place update of the dataset
         )
         jit_langevin_step = jax.jit(
-            jax.vmap(self.langevin_step, in_axes=(0, 0, None, None))
+            jax.vmap(self.langevin_step, in_axes=(0, 0, None, None)),
+            donate_argnums=(0,),  # in-place update of the control tape
         )
 
         # Set the initial state
@@ -304,20 +304,13 @@ class DatasetGenerator:
         state_rng = jax.random.split(state_rng, N)
         x0 = jit_reset(state_rng)
 
-        # Sample inital control tape U ~ 𝒩(0, σ_L²) and compute its score
-        rng, init_rng, score_rng = jax.random.split(rng, 3)
-        U = sigmaL * jax.random.normal(
-            init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
-        )
-        s, cost = jit_score(x0, U, sigmaL, score_rng)
-
         # Allocate the dataset
         dataset = self.allocate_dataset()
 
-        print(
-            f"k = {L}, σₖ = {sigmaL:.4f}, "
-            f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
-            f"time = {datetime.now() - start_time}"
+        # Sample inital control tape U ~ 𝒩(0, σ_L²)
+        rng, init_rng = jax.random.split(rng)
+        U = self.langevin_options.starting_noise_level * jax.random.normal(
+            init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
         )
 
         i = 0  # counter for which row of the dataset we're writing to
@@ -330,15 +323,15 @@ class DatasetGenerator:
                 -self.langevin_options.noise_decay_rate * t
             )
 
-            # Update the control tape from the previous score
-            U = jit_langevin_step(U, s, sigma, step_rng)
-
-            # Compute the score estimate for the new control tape
+            # Compute the score estimate
             s, cost = jit_score(x0, U, sigma, score_rng)
 
             # Update the dataset
             dataset = jit_update(dataset, x0.obs, U, s, k, sigma, i)
             i += 1
+
+            # Update the control tape from the previous score
+            U = jit_langevin_step(U, s, sigma, step_rng)
 
             if k % self.datagen_options.print_every == 0:
                 print(

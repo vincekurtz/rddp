@@ -66,7 +66,7 @@ def annealed_langevin_sample(
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
     ],
     rng: jax.random.PRNGKey,
-) -> jnp.ndarray:
+) -> Tuple[jnp.ndarray, DiffusionDataset]:
     """Generate a sample from the target distribution p(U | y₀).
 
     Annealed Langevin samples intermediate distributions
