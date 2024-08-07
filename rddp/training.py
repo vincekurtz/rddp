@@ -29,12 +29,14 @@ class TrainingOptions:
             superbatch is a collection of batches that are loaded into memory.
         epochs: The number of training epochs.
         learning_rate: The learning rate for training.
+        print_every: The frequency at which to print training statistics.
     """
 
     batch_size: int
     num_superbatches: int
     epochs: int
     learning_rate: float
+    print_every: int = 1
 
 
 def create_train_state(
@@ -246,11 +248,12 @@ def train(
         metrics["train_time"].append(train_time)
 
         # Print some training statistics
-        print(
-            f"Epoch {epoch + 1} / {options.epochs}, "
-            f"loss: {loss:.4f}, "
-            f"load time: {load_time:.4f}s, "
-            f"train time: {train_time:.4f}s"
-        )
+        if (epoch + 1) % options.print_every == 0:
+            print(
+                f"Epoch {epoch + 1} / {options.epochs}, "
+                f"loss: {loss:.4f}, "
+                f"load time: {load_time:.4f}s, "
+                f"train time: {train_time:.4f}s"
+            )
 
     return train_state.params, metrics
