@@ -142,31 +142,27 @@ def test_generate() -> None:
     # Create a generator
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=250,
+        num_noise_levels=250 * 8,
         starting_noise_level=0.1,
-        num_steps=8,
         step_size=0.1,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
         num_initial_states=5,
         num_rollouts_per_data_point=16,
-        save_every=50,
         save_path=local_dir,
+        save_every=1,
+        print_every=100,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     # Generate and save the dataset
     rng = jax.random.PRNGKey(0)
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
 
     # Check that we've generated the correct number of data points
-    N = (
-        langevin_options.num_steps
-        * langevin_options.num_noise_levels
-        * gen_options.num_initial_states
-    )
+    N = langevin_options.num_noise_levels * gen_options.num_initial_states
     with h5py.File(local_dir / "dataset.h5", "r") as f:
         h5_dataset = HDF5DiffusionDataset(f)
         assert len(h5_dataset) == N
@@ -178,6 +174,6 @@ def test_generate() -> None:
 
 
 if __name__ == "__main__":
-    test_score_estimate()
-    test_save_dataset()
-    # test_generate()
+    # test_score_estimate()
+    # test_save_dataset()
+    test_generate()
