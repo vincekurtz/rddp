@@ -52,10 +52,13 @@ def test_score_estimate() -> None:
 
     # Estimate the score
     rng, score_estimate_rng = jax.random.split(rng)
-    s, cost = generator.estimate_noised_score(x0, U, sigma, score_estimate_rng)
+    s, cost, obs = generator.estimate_noised_score(
+        x0, U, sigma, score_estimate_rng
+    )
 
     assert s.shape == U.shape
     assert cost.shape == ()
+    assert obs.shape == (prob.num_steps, prob.env.observation_size)
 
     # Gradient descent should improve the cost
     original_cost, _ = prob.rollout(x0, U)
@@ -101,20 +104,20 @@ def test_save_dataset() -> None:
 
     # Make some random fake data and save it
     num_samples = 100
-    rng, y0_rng, U_rng, s_rng, sigma_rng, k_rng = jax.random.split(rng, 6)
-    y0 = jax.random.uniform(y0_rng, (num_samples, 2))
+    rng, Y_rng, U_rng, s_rng, sigma_rng, k_rng = jax.random.split(rng, 6)
+    Y = jax.random.uniform(Y_rng, (num_samples, 20, 2))
     U = jax.random.uniform(U_rng, (num_samples, 19, 2))
     s = jax.random.uniform(s_rng, (num_samples, 19, 2))
     sigma = jax.random.uniform(sigma_rng, (num_samples, 1))
     k = jax.random.randint(k_rng, (num_samples, 1), 0, 100)
-    dataset = DiffusionDataset(y0=y0, U=U, s=s, sigma=sigma, k=k)
+    dataset = DiffusionDataset(Y=Y, U=U, s=s, sigma=sigma, k=k)
     generator.save_dataset(dataset)
 
     # Check that the hdf5 file was updated
     with h5py.File(local_dir / "dataset.h5", "r") as f:
         h5_dataset = HDF5DiffusionDataset(f)
         assert len(h5_dataset) == num_samples
-        assert h5_dataset.y0.shape == (num_samples, 2)
+        assert h5_dataset.Y.shape == (num_samples, 20, 2)
         assert h5_dataset.U.shape == (num_samples, 19, 2)
         assert h5_dataset.s.shape == (num_samples, 19, 2)
         assert h5_dataset.sigma.shape == (num_samples, 1)
@@ -122,7 +125,7 @@ def test_save_dataset() -> None:
 
         # Check that slicing on the hdf5 dataset works
         partial_dataset = h5_dataset[2:14]
-        assert jnp.all(partial_dataset.y0 == y0[2:14])
+        assert jnp.all(partial_dataset.Y == Y[2:14])
         assert jnp.all(partial_dataset.U == U[2:14])
         assert jnp.all(partial_dataset.s == s[2:14])
         assert jnp.all(partial_dataset.sigma == sigma[2:14])
@@ -205,7 +208,7 @@ def test_langevin() -> None:
     with h5py.File(local_dir / "dataset.h5", "r") as f:
         h5_dataset = HDF5DiffusionDataset(f)
         U_gen = jnp.array(h5_dataset.U)
-        y0 = h5_dataset.y0[-1]
+        y0 = h5_dataset.Y[-1, 0]
 
     # Do langevin sampling with the utils function
     # N.B. the awkward series of rng splits ensures that we get the same

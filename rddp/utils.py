@@ -116,7 +116,7 @@ def annealed_langevin_sample(
 
         # Save intermediate values in a diffusion dataset
         dataset = DiffusionDataset(
-            y0=y0,
+            Y=y0,  # store the initial observation y₀ since we don't have Y
             U=U,
             s=s,
             k=jnp.full((U.shape[0], 1), k),
@@ -189,14 +189,14 @@ class HDF5DiffusionDataset:
         # conversion to jnp arrays is super slow when done directly from the
         # HDF5 file, so we load everything into CPU memory first and only move
         # to GPU when the data is accessed with __getitem__.
-        self.y0 = np.array(file["y0"], dtype=jnp.float32)
+        self.Y = np.array(file["Y"], dtype=jnp.float32)
         self.U = np.array(file["U"], dtype=jnp.float32)
         self.s = np.array(file["s"], dtype=jnp.float32)
         self.sigma = np.array(file["sigma"], dtype=jnp.float32)
         self.k = np.array(file["k"], dtype=jnp.int32)
 
         # Size checks
-        self.num_data_points = self.y0.shape[0]
+        self.num_data_points = self.Y.shape[0]
         assert self.U.shape[0] == self.num_data_points
         assert self.s.shape[0] == self.num_data_points
         assert self.sigma.shape[0] == self.num_data_points
@@ -222,7 +222,7 @@ class HDF5DiffusionDataset:
             A jax dataset object containing the data at the given indices.
         """
         return DiffusionDataset(
-            y0=jnp.asarray(self.y0[idx], dtype=jnp.float32),
+            Y=jnp.asarray(self.Y[idx], dtype=jnp.float32),
             U=jnp.asarray(self.U[idx], dtype=jnp.float32),
             s=jnp.asarray(self.s[idx], dtype=jnp.float32),
             sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),
