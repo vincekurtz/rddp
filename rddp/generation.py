@@ -24,6 +24,7 @@ class DatasetGenerationOptions:
                                      each score, M.
         save_every: The number of noise levels to generate between saves.
         save_path: The directory to save the generated dataset to.
+        print_every: How often to print a performance summary during generation.
     """
 
     starting_temperature: float
@@ -31,6 +32,7 @@ class DatasetGenerationOptions:
     num_rollouts_per_data_point: int
     save_every: int
     save_path: Union[str, Path]
+    print_every: int = 1
 
 
 class DatasetGenerator:
@@ -328,13 +330,13 @@ class DatasetGenerator:
             # Update the dataset
             dataset = jit_update(dataset, x0.obs, U, s, k, sigma)
 
-            print(
-                f"k = {k}, σₖ = {sigma:.4f}, "
-                f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
-                f"time = {datetime.now() - start_time}"
-            )
+            if k % self.datagen_options.print_every == 0:
+                print(
+                    f"k = {k}, σₖ = {sigma:.4f}, "
+                    f"cost = {jnp.mean(cost):.4f} +/- {jnp.std(cost):.4f}, "
+                    f"time = {datetime.now() - start_time}"
+                )
 
             if k % self.datagen_options.save_every == 0:
-                print(f"**** Saving to {self.h5_path} at k={k} ****")
                 self.save_dataset(dataset)
                 dataset = jit_initialize()
