@@ -12,14 +12,14 @@ class DiffusionDataset:
     """Training data for a diffusion policy.
 
     Attributes:
-        y0: The initial observation y₀.
+        Y: The observation sequence Y = [y₀, y₁, ..., y_T].
         U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
         s: The noised score estimate ŝ = ∇ log pₖ(U | y₀).
         k: The noise level index k.
         sigma: The noise level σₖ.
     """
 
-    y0: jnp.ndarray
+    Y: jnp.ndarray
     U: jnp.ndarray
     s: jnp.ndarray
     k: jnp.ndarray
