@@ -25,6 +25,7 @@ from rddp.utils import (
 # Global planning horizon definition
 HORIZON = 10
 
+
 def solve_with_gradient_descent(
     plot: bool = True, u_guess: float = 0.0
 ) -> None:
@@ -117,9 +118,9 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=5000,
+        num_noise_levels=1000,
         starting_noise_level=0.1,
-        step_size=0.01,
+        step_size=0.1,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
@@ -211,13 +212,8 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
 
     # Decide how much noise to add in the Langevin sampling
     options = options.replace(
-        noise_injection_level=0.0, 
+        noise_injection_level=0.0,
     )
-
-    def score_fn(y: jnp.ndarray, u: jnp.ndarray, sigma: jnp.ndarray, rng: jnp.ndarray):
-        """Evaluate the score function."""
-        sigma = jnp.atleast_1d(sigma)
-        return net.apply(params, y, u, sigma)
 
     def optimize_control_tape(rng: jax.random.PRNGKey):
         """Optimize the control sequence using Langevin dynamics."""
@@ -237,7 +233,9 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
             options=options,
             y0=x0.obs,
             controls=U_guess,
-            score_fn=score_fn,
+            score_fn=lambda y, u, sigma, rng: net.apply(
+                params, y, u, jnp.atleast_1d(sigma)
+            ),
             rng=langevin_rng,
         )
 
@@ -275,7 +273,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
         def update(i: int):
             j, i = divmod(i, options.num_noise_levels)
             j = j % num_samples
-            ax.set_title(f"σₖ={sigma[0, i, 0, 0]:.4f}")
+            ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
             path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
             return path
 
