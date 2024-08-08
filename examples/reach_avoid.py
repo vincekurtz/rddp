@@ -118,9 +118,9 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=2000,
+        num_noise_levels=300 * 100,
         starting_noise_level=0.1,
-        step_size=0.03,
+        step_size=0.01,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
@@ -211,7 +211,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     options = data["langevin_options"]
 
     # Decide how much noise to add in the Langevin sampling
-    options = options.replace(noise_injection_level=0.0)
+    options = options.replace(noise_injection_level=1.0)
 
     def optimize_control_tape(rng: jax.random.PRNGKey):
         """Optimize the control sequence using Langevin dynamics."""
