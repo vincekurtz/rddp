@@ -22,9 +22,8 @@ def test_training() -> None:
     # Generate a training dataset
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=5), num_steps=5)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=100,
+        num_noise_levels=1000,
         starting_noise_level=0.5,
-        num_steps=10,
         step_size=0.01,
     )
     gen_options = DatasetGenerationOptions(
@@ -36,7 +35,7 @@ def test_training() -> None:
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     assert (local_dir / "dataset.h5").exists()
 
     # Train a score network
@@ -57,7 +56,7 @@ def test_training() -> None:
         dataset = h5_dataset[...]
     score_estimate = net.apply(
         params,
-        dataset.y0[test_idx],
+        dataset.Y[test_idx, 0],
         dataset.U[test_idx],
         dataset.sigma[test_idx],
     )

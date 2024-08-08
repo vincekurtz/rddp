@@ -85,7 +85,7 @@ def apply_model(
 
     def loss_fn(params: Params) -> jnp.ndarray:
         """Compute the loss for a batch of data points."""
-        s = state.apply_fn(params, batch.Y[0], batch.U, batch.sigma)
+        s = state.apply_fn(params, batch.Y[:, 0], batch.U, batch.sigma)
         err = jnp.square(s - batch.s)
 
         # Weigh the error by the noise level, as recommended by Song et al.
@@ -201,7 +201,7 @@ def train(
 
     # Initialize the training state
     rng, init_rng = jax.random.split(rng)
-    ny = h5_dataset.Y.shape[0, -1:]
+    ny = h5_dataset.Y.shape[-1:]
     nu = h5_dataset.U.shape[-2:]
     train_state = create_train_state(network, ny, nu, options, init_rng)
 
