@@ -33,9 +33,8 @@ def test_annealed_langevin_sample() -> None:
 
     # First do regular Langevin sampling. We should get close to u_nom.
     options = AnnealedLangevinOptions(
-        num_noise_levels=100,
-        starting_noise_level=2.0,
-        num_steps=50,
+        num_noise_levels=5000,
+        starting_noise_level=1.0,
         step_size=0.01,
         noise_injection_level=1.0,
     )
@@ -44,17 +43,16 @@ def test_annealed_langevin_sample() -> None:
     U, data = annealed_langevin_sample(
         options=options,
         y0=jnp.zeros(3),  # unused in this example
-        u_init=jnp.zeros(2),
+        controls=jnp.zeros(2),
         score_fn=score_fn,
         rng=langevin_rng,
     )
 
     assert isinstance(data, DiffusionDataset)
-    assert data.y0.shape == (options.num_noise_levels, options.num_steps, 3)
-    assert data.U.shape == (options.num_noise_levels, options.num_steps, 2)
+    assert data.U.shape == (options.num_noise_levels, 2)
     assert data.s.shape == data.U.shape
-    assert data.sigma.shape == (options.num_noise_levels, options.num_steps, 1)
-    assert data.k.shape == (options.num_noise_levels, options.num_steps, 1)
+    assert data.sigma.shape == (options.num_noise_levels, 1)
+    assert data.k.shape == (options.num_noise_levels, 1)
 
     cost = cost_fn(U)
     assert cost < 0.1
@@ -65,7 +63,7 @@ def test_annealed_langevin_sample() -> None:
     U, data = annealed_langevin_sample(
         options=options,
         y0=jnp.zeros(3),
-        u_init=jnp.zeros(2),
+        controls=jnp.zeros(2),
         score_fn=score_fn,
         rng=langevin_rng,
     )
@@ -73,17 +71,6 @@ def test_annealed_langevin_sample() -> None:
     zero_noise_cost = cost_fn(U)
     assert zero_noise_cost < 1e-4
     assert zero_noise_cost < cost
-
-    # Check that we can just do a subset of the steps.
-    U, data = annealed_langevin_sample(
-        options=options,
-        y0=jnp.zeros(3),
-        u_init=jnp.zeros(2),
-        score_fn=score_fn,
-        rng=langevin_rng,
-        noise_range=(100, 90),
-    )
-    assert data.U.shape == (10, options.num_steps, 2)
 
 
 if __name__ == "__main__":
