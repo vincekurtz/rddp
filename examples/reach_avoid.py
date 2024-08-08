@@ -247,7 +247,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0
+    y0 = data.Y[:, :, 0]
     U = data.U
     sigma = data.sigma
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
