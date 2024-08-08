@@ -32,7 +32,7 @@ def solve_with_gradient_descent() -> None:
         BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
     )
     x0 = prob.env.reset(jax.random.PRNGKey(0))
-    U, _, _ = solve_gd(prob, x0)
+    U, _, _ = solve_gd(prob, x0, step_size=1e-4)
 
     _, X = prob.rollout(x0, U)
     q = X.pipeline_state.q
@@ -54,9 +54,6 @@ def visualize_dataset(
         num_noise_levels: The number of noise levels in the dataset.
     """
     rng = jax.random.PRNGKey(0)
-    x0 = prob.env.reset(rng)  # fixed in this example
-
-    jit_rollout = jax.jit(jax.vmap(prob.rollout, in_axes=(None, 0)))
 
     noise_levels = [
         0,
@@ -74,12 +71,11 @@ def visualize_dataset(
         # Get a random subset of the data at this noise level
         rng, sample_rng = jax.random.split(rng)
         subset = sample_dataset(dataset, k, 32, sample_rng)
+        obs = subset.Y
 
         # Plot the scenario and the sampled trajectories
         prob.env.plot_scenario()
-        _, Xs = jit_rollout(x0, subset.U)
-        Xs = Xs.pipeline_state.q
-        px, py = Xs[:, :, 0].T, Xs[:, :, 1].T
+        px, py = obs[..., 0].T, obs[..., 1].T
         ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
 
         sigma = subset.sigma[0, 0]
@@ -87,17 +83,17 @@ def visualize_dataset(
 
     # Plot costs at each iteration
     plt.figure()
-    for k in range(num_noise_levels):
+    for k in range(0, num_noise_levels, 50):
         iter = num_noise_levels - k
 
         # Get a random subset of the data at this noise level
         rng, sample_rng = jax.random.split(rng)
         subset = sample_dataset(dataset, k, 32, sample_rng)
 
-        # Compute the cost of each trajectory and add it to the plot
-        # N.B. for this example we have y = x.
-        costs, _ = jit_rollout(x0, subset.U)
+        # Plot the costs
+        costs = subset.cost
         plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
+
     plt.xlabel("Iteration (L - k)")
     plt.ylabel("Cost J(U, x₀)")
     plt.yscale("log")
@@ -115,17 +111,17 @@ def generate_dataset(plot: bool = False) -> None:
         BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
+        num_noise_levels=5000,
         starting_noise_level=0.1,
-        num_steps=100,
-        step_size=0.01,
+        step_size=0.05,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
-        save_every=100,
+        save_every=1000,
+        print_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -133,7 +129,7 @@ def generate_dataset(plot: bool = False) -> None:
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested
@@ -162,7 +158,7 @@ def fit_score_model() -> None:
 
     # Set up the training options and the score network
     training_options = TrainingOptions(
-        batch_size=10240,
+        batch_size=5120,
         num_superbatches=1,
         epochs=50,
         learning_rate=1e-3,
@@ -229,7 +225,7 @@ def deploy_trained_model(
         U, data = annealed_langevin_sample(
             options=options,
             y0=x0.obs,
-            u_init=U_guess,
+            controls=U_guess,
             score_fn=lambda y, u, sigma, rng: net.apply(
                 params, y, u, jnp.array([sigma])
             ),
@@ -246,9 +242,9 @@ def deploy_trained_model(
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-    U = data.U[:, :, -1, :]
-    sigma = data.sigma[:, :, -1]
+    y0 = data.Y
+    U = data.U
+    sigma = data.sigma
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
     print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 
