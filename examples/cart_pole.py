@@ -27,7 +27,6 @@ def generate_dataset() -> None:
     langevin_options = AnnealedLangevinOptions(
         num_noise_levels=30,
         starting_noise_level=0.1,
-        num_steps=1,
         step_size=1.0,
         noise_injection_level=1.0,
     )
@@ -35,7 +34,7 @@ def generate_dataset() -> None:
         starting_temperature=1.0,
         num_initial_states=128,
         num_rollouts_per_data_point=128,
-        save_every=1,
+        save_every=30,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -43,7 +42,7 @@ def generate_dataset() -> None:
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
 
@@ -124,7 +123,7 @@ def deploy_trained_model() -> None:
         U, data = annealed_langevin_sample(
             options=options,
             y0=x0.obs,
-            u_init=U_guess,
+            controls=U_guess,
             score_fn=lambda y, u, sigma, rng: net.apply(
                 params, y, u, jnp.array([sigma])
             ),
@@ -141,8 +140,8 @@ def deploy_trained_model() -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, -1, -1, :]  # x0, noise level, step, dim
-    U = data.U[:, -1, -1, :, :]
+    y0 = data.Y[:, -1, :]  # x0, diffusion step, dim
+    U = data.U[:, -1, :]
     costs, Xs = jax.vmap(rollout_from_obs)(y0, U)
     print(f"Cost: {jnp.mean(costs):.4f} +/- {jnp.std(costs):.4f}")
 
