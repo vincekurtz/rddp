@@ -307,7 +307,7 @@ class DatasetGenerator:
             donate_argnums=(0,),  # in-place update of the dataset
         )
         jit_langevin_step = jax.jit(
-            jax.vmap(self.langevin_step, in_axes=(0, 0, None, None)),
+            jax.vmap(self.langevin_step, in_axes=(0, 0, None, 0)),
             donate_argnums=(0,),  # in-place update of the control tape
         )
 
@@ -321,7 +321,7 @@ class DatasetGenerator:
 
         # Sample inital control tape U ~ 𝒩(0, σ_L²)
         rng, init_rng = jax.random.split(rng)
-        U = 0*self.langevin_options.starting_noise_level * jax.random.normal(
+        U = self.langevin_options.starting_noise_level * jax.random.normal(
             init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
         )
 
@@ -344,7 +344,8 @@ class DatasetGenerator:
             i += 1
 
             # Update the control tape from the previous score
-            U = jit_langevin_step(U, s, sigma, step_rng)
+            step_rngs = jax.random.split(step_rng, N)
+            U = jit_langevin_step(U, s, sigma, step_rngs)
 
             if k % self.datagen_options.print_every == 0:
                 print(

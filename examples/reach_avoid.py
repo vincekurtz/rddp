@@ -23,8 +23,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 11
-
+HORIZON = 10
 
 def solve_with_gradient_descent(
     plot: bool = True, u_guess: float = 0.0
@@ -118,17 +117,17 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=5,
-        starting_noise_level=1.0,
-        step_size=0.1,
+        num_noise_levels=5000,
+        starting_noise_level=0.1,
+        step_size=0.01,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
-        num_initial_states=16,
+        num_initial_states=256,
         num_rollouts_per_data_point=128,
-        save_every=1,
-        print_every=1,
+        save_every=1000,
+        print_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -143,7 +142,7 @@ def generate_dataset(plot: bool = False) -> None:
     if plot:
         # Select every Nth data point for visualization. This avoids loading
         # the full dataset into memory.
-        N = 1
+        N = 10
         st = time.time()
         with h5py.File(save_path + "dataset.h5", "r") as f:
             h5_dataset = HDF5DiffusionDataset(f)
