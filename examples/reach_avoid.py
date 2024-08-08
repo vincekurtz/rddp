@@ -23,7 +23,7 @@ from rddp.utils import (
 )
 
 # Global planning horizon definition
-HORIZON = 10
+HORIZON = 11
 
 
 def solve_with_gradient_descent(
@@ -118,17 +118,17 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300 * 100,
-        starting_noise_level=0.1,
+        num_noise_levels=5000,
+        starting_noise_level=0.5,
         step_size=0.01,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
-        num_initial_states=256,
+        num_initial_states=1024,
         num_rollouts_per_data_point=128,
         save_every=1000,
-        print_every=500,
+        print_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -211,7 +211,14 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     options = data["langevin_options"]
 
     # Decide how much noise to add in the Langevin sampling
-    options = options.replace(noise_injection_level=1.0)
+    options = options.replace(
+        noise_injection_level=0.1, 
+    )
+
+    def score_fn(y: jnp.ndarray, u: jnp.ndarray, sigma: jnp.ndarray, rng: jnp.ndarray):
+        """Evaluate the score function."""
+        sigma = jnp.atleast_1d(sigma)
+        return net.apply(params, y, u, sigma)
 
     def optimize_control_tape(rng: jax.random.PRNGKey):
         """Optimize the control sequence using Langevin dynamics."""
@@ -231,9 +238,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
             options=options,
             y0=x0.obs,
             controls=U_guess,
-            score_fn=lambda y, u, sigma, rng: net.apply(
-                params, y, u, jnp.array([sigma])
-            ),
+            score_fn=score_fn,
             rng=langevin_rng,
         )
 
@@ -247,7 +252,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.Y[:, :, 0]
+    y0 = data.Y
     U = data.U
     sigma = data.sigma
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)

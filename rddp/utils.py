@@ -120,7 +120,7 @@ def annealed_langevin_sample(
         # Note that we don't have access to the cost J(U | y₀) or the
         # observation sequence Y here.
         dataset = DiffusionDataset(
-            Y=jnp.tile(y0, (U.shape[0], 1)),
+            Y=y0,
             U=U,
             s=s,
             k=jnp.expand_dims(k, -1),
