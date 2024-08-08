@@ -5,7 +5,6 @@ import time
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import ScoreMLP
 from rddp.envs.double_integrator import DoubleIntegratorEnv
@@ -22,7 +21,7 @@ HORIZON = 10
 def solve_with_gradient_descent() -> None:
     """Solve the optimal control problem using simple gradient descent."""
     rng = jax.random.PRNGKey(1)
-    prob = OptimalControlProblem(DoubleIntegratorEnv(), HORIZON)
+    prob = OptimalControlProblem(DoubleIntegratorEnv(), HORIZON, u_max=10.0)
 
     rng, reset_rng = jax.random.split(rng)
     x0 = prob.env.reset(reset_rng)
@@ -41,12 +40,13 @@ def generate_dataset(plot: bool = True) -> None:
     save_path = "/tmp/double_integrator"
 
     # Problem setup
-    prob = OptimalControlProblem(DoubleIntegratorEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        DoubleIntegratorEnv(), num_steps=HORIZON, u_max=10.0
+    )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
+        denoising_steps=500,
         starting_noise_level=0.5,
-        num_steps=100,
-        step_size=0.01,
+        step_size=0.1,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
@@ -54,13 +54,14 @@ def generate_dataset(plot: bool = True) -> None:
         num_initial_states=256,
         num_rollouts_per_data_point=128,
         save_every=100,
+        print_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
 
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
 
@@ -99,12 +100,12 @@ def fit_score_model() -> None:
     print(f"Saved trained model to {fname}")
 
 
-def deploy_trained_model(
-    plot: bool = True, animate: bool = False, save_path: str = None
-) -> None:
+def deploy_trained_model(plot: bool = True) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
-    prob = OptimalControlProblem(DoubleIntegratorEnv(), num_steps=HORIZON)
+    prob = OptimalControlProblem(
+        DoubleIntegratorEnv(), num_steps=HORIZON, u_max=10.0
+    )
 
     def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
         """Do a rollout from an observation, and return observations."""
@@ -146,7 +147,7 @@ def deploy_trained_model(
         U, data = annealed_langevin_sample(
             options=options,
             y0=x0.obs,
-            u_init=U_guess,
+            controls=U_guess,
             score_fn=lambda x, u, sigma, rng: net.apply(
                 params, x, u, jnp.array([sigma])
             ),
@@ -163,9 +164,8 @@ def deploy_trained_model(
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-    U = data.U[:, :, -1, :]
-    sigma = data.sigma[:, :, -1]
+    y0 = data.Y
+    U = data.U
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
     print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 
@@ -176,27 +176,6 @@ def deploy_trained_model(
             plt.plot(
                 Xs[i, -1, :, 0], Xs[i, -1, :, 1], "o-", color="blue", alpha=0.5
             )
-        plt.show()
-
-    # Animate the trajectory generation process
-    if animate:
-        fig, ax = plt.subplots()
-        prob.env.plot_scenario()
-        path = ax.plot([], [], "o-")[0]
-
-        def update(i: int):
-            j, i = divmod(i, options.num_noise_levels)
-            j = j % num_samples
-            ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
-            path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
-            return path
-
-        anim = FuncAnimation(  # noqa: F841 anim must stay in scope until plot
-            fig,
-            update,
-            frames=options.num_noise_levels * num_samples,
-            interval=10,
-        )
         plt.show()
 
 
@@ -213,7 +192,7 @@ if __name__ == "__main__":
     elif sys.argv[1] == "fit":
         fit_score_model()
     elif sys.argv[1] == "deploy":
-        deploy_trained_model(plot=True, animate=True)
+        deploy_trained_model(plot=True)
     else:
         print(usage)
         sys.exit(1)

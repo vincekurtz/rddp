@@ -74,11 +74,11 @@ class BugTrapEnv(PipelineEnv):
         # Terminal cost
         goal_err = q_new[0:2] - self.target_position
         reward += jnp.where(
-            state.info["step"] >= self.num_steps,
+            state.info["step"] >= self.num_steps - 1,
             -goal_err.dot(goal_err),
             0.0,
         )
-        done = jnp.where(state.info["step"] > self.num_steps, 1.0, 0.0)
+        done = jnp.where(state.info["step"] >= self.num_steps, 1.0, 0.0)
 
         return state.replace(
             pipeline_state=new_pipeline_state, obs=obs, reward=reward, done=done

@@ -14,17 +14,17 @@ def test_rollout() -> None:
 
     rng, x0_rng, u_rng = jax.random.split(rng, 3)
     x0 = env.reset(x0_rng)
-    control_tape = jax.random.uniform(u_rng, (ocp.num_steps, 2))
+    control_tape = jax.random.uniform(u_rng, (ocp.num_steps - 1, 2))
 
     # Roll out with the helper
     total_cost, state_trajectory = ocp.rollout(x0, control_tape)
-    assert state_trajectory.pipeline_state.q.shape == (ocp.num_steps + 1, 2)
+    assert state_trajectory.pipeline_state.q.shape == (ocp.num_steps, 2)
     assert jnp.all(state_trajectory.done == 0.0)
 
     # Roll out manually
     x = x0
     total_cost_manual = 0.0
-    for i in range(ocp.num_steps):
+    for i in range(ocp.num_steps - 1):
         assert jnp.all(x.done == 0.0)
         u = jnp.tanh(control_tape[i])
         x = env.step(x, u)
