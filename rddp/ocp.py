@@ -44,7 +44,7 @@ class OptimalControlProblem:
 
         def scan_fn(carry: Tuple, u: jnp.ndarray):
             x, cost = carry
-            #u = self.u_max * jnp.tanh(u / self.u_max)
+            u = self.u_max * jnp.tanh(u / self.u_max)
             cost -= x.reward * (1 - x.done)
             x_next = self.env.step(x, u)
             return (x_next, cost), x
