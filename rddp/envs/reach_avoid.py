@@ -30,16 +30,18 @@ class ReachAvoidEnv(PipelineEnv):
             The initial state of the environment.
         """
         rng, x_rng, y_rng = jax.random.split(rng, 3)
-        px = jax.random.uniform(
-            x_rng,
-            minval=self.horizontal_limits[0],
-            maxval=self.horizontal_limits[1],
-        )
-        py = jax.random.uniform(
-            y_rng,
-            minval=self.vertical_limits[0],
-            maxval=self.vertical_limits[1],
-        )
+        #px = jax.random.uniform(
+        #    x_rng,
+        #    minval=self.horizontal_limits[0],
+        #    maxval=self.horizontal_limits[1],
+        #)
+        #py = jax.random.uniform(
+        #    y_rng,
+        #    minval=self.vertical_limits[0],
+        #    maxval=self.vertical_limits[1],
+        #)
+        px = 0.01
+        py = -1.5
         pipeline_state = base.State(
             q=jnp.array([px, py]),
             qd=jnp.zeros(2),

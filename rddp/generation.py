@@ -291,7 +291,7 @@ class DatasetGenerator:
         # Some helper functions
         jit_reset = jax.jit(jax.vmap(self.prob.env.reset))
         jit_score = jax.jit(
-            jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, None))
+            jax.vmap(self.estimate_noised_score, in_axes=(0, 0, None, 0))
         )
         jit_update = jax.jit(
             lambda dataset, y, u, s, k, sigma, cost, i: self.add_to_dataset(
@@ -321,7 +321,7 @@ class DatasetGenerator:
 
         # Sample inital control tape U ~ 𝒩(0, σ_L²)
         rng, init_rng = jax.random.split(rng)
-        U = self.langevin_options.starting_noise_level * jax.random.normal(
+        U = 0*self.langevin_options.starting_noise_level * jax.random.normal(
             init_rng, (N, self.prob.num_steps - 1, self.prob.env.action_size)
         )
 
@@ -336,7 +336,8 @@ class DatasetGenerator:
             )
 
             # Compute the score estimate
-            s, cost, Y = jit_score(x0, U, sigma, score_rng)
+            score_rngs = jax.random.split(score_rng, N)
+            s, cost, Y = jit_score(x0, U, sigma, score_rngs)
 
             # Update the dataset
             dataset = jit_update(dataset, Y, U, s, k, sigma, cost, i)

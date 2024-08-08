@@ -118,17 +118,17 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=5000,
-        starting_noise_level=0.5,
-        step_size=0.01,
+        num_noise_levels=5,
+        starting_noise_level=1.0,
+        step_size=0.1,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
-        num_initial_states=1024,
+        num_initial_states=16,
         num_rollouts_per_data_point=128,
-        save_every=1000,
-        print_every=100,
+        save_every=1,
+        print_every=1,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -143,7 +143,7 @@ def generate_dataset(plot: bool = False) -> None:
     if plot:
         # Select every Nth data point for visualization. This avoids loading
         # the full dataset into memory.
-        N = 10
+        N = 1
         st = time.time()
         with h5py.File(save_path + "dataset.h5", "r") as f:
             h5_dataset = HDF5DiffusionDataset(f)
@@ -212,7 +212,7 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
 
     # Decide how much noise to add in the Langevin sampling
     options = options.replace(
-        noise_injection_level=0.1, 
+        noise_injection_level=0.0, 
     )
 
     def score_fn(y: jnp.ndarray, u: jnp.ndarray, sigma: jnp.ndarray, rng: jnp.ndarray):
