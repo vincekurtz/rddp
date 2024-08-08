@@ -26,7 +26,7 @@ def test_score_estimate() -> None:
 
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=10,
+        denoising_steps=10,
         starting_noise_level=0.1,
         step_size=0.1,
     )
@@ -81,7 +81,7 @@ def test_save_dataset() -> None:
 
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=10,
+        denoising_steps=10,
         starting_noise_level=0.1,
         step_size=0.1,
     )
@@ -149,7 +149,7 @@ def test_generate() -> None:
     # Create a generator
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=20), num_steps=20)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=2000,
+        denoising_steps=2000,
         starting_noise_level=0.1,
         step_size=0.1,
     )
@@ -169,7 +169,7 @@ def test_generate() -> None:
     generator.generate(gen_rng)
 
     # Check that we've generated the correct number of data points
-    N = langevin_options.num_noise_levels * gen_options.num_initial_states
+    N = langevin_options.denoising_steps * gen_options.num_initial_states
     with h5py.File(local_dir / "dataset.h5", "r") as f:
         h5_dataset = HDF5DiffusionDataset(f)
         assert len(h5_dataset) == N
@@ -204,7 +204,7 @@ def test_langevin() -> None:
     # Set up a problem instance
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=10), num_steps=10)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=3000,
+        denoising_steps=3000,
         starting_noise_level=0.1,
         step_size=0.05,
     )

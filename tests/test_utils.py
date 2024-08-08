@@ -33,7 +33,7 @@ def test_annealed_langevin_sample() -> None:
 
     # First do regular Langevin sampling. We should get close to u_nom.
     options = AnnealedLangevinOptions(
-        num_noise_levels=5000,
+        denoising_steps=5000,
         starting_noise_level=1.0,
         step_size=0.01,
         noise_injection_level=1.0,
@@ -49,10 +49,10 @@ def test_annealed_langevin_sample() -> None:
     )
 
     assert isinstance(data, DiffusionDataset)
-    assert data.U.shape == (options.num_noise_levels, 2)
+    assert data.U.shape == (options.denoising_steps, 2)
     assert data.s.shape == data.U.shape
-    assert data.sigma.shape == (options.num_noise_levels, 1)
-    assert data.k.shape == (options.num_noise_levels, 1)
+    assert data.sigma.shape == (options.denoising_steps, 1)
+    assert data.k.shape == (options.denoising_steps, 1)
 
     cost = cost_fn(U)
     assert cost < 0.1

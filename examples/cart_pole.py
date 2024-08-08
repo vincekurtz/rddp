@@ -25,7 +25,7 @@ def generate_dataset() -> None:
 
     prob = OptimalControlProblem(InvertedPendulum(), num_steps=HORIZON)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=30,
+        denoising_steps=30,
         starting_noise_level=0.1,
         step_size=1.0,
         noise_injection_level=1.0,

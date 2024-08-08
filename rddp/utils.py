@@ -43,7 +43,7 @@ class AnnealedLangevinOptions:
     with a decreasing sequence of noise levels σₖ.
 
     Attributes:
-        num_noise_levels: The number of noise levels L.
+        diffusion_steps: The number of denoising steps (and noise levels) L.
         starting_noise_level: The starting noise level σ_L.
         step_size: The Langevin step size α.
         noise_injection_level: The noise injection level for each Langevin step.
@@ -53,7 +53,7 @@ class AnnealedLangevinOptions:
             exp(-βt), where t = (L - k) / L.
     """
 
-    num_noise_levels: int
+    denoising_steps: int
     starting_noise_level: int
     step_size: float
     noise_injection_level: float = 1.0
@@ -95,7 +95,7 @@ def annealed_langevin_sample(
         The final sample U⁰ ~ p(U | y₀).
         A dataset containing the intermediate control sequences Uᵏ scores, etc.
     """
-    L = options.num_noise_levels
+    L = options.denoising_steps
     sigmaL = options.starting_noise_level
     beta = options.noise_injection_level
 

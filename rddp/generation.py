@@ -58,7 +58,7 @@ class DatasetGenerator:
         # Determine the size of the dataset that we'll hold in GPU memory
         # before saving out to disc.
         assert (
-            langevin_options.num_noise_levels % datagen_options.save_every == 0
+            langevin_options.denoising_steps % datagen_options.save_every == 0
         ), "The number of noise levels must be divisible by the save frequency."
 
         # Save langevin sampling options, since we'll use them again when we
@@ -285,7 +285,7 @@ class DatasetGenerator:
         start_time = datetime.now()
 
         # Some useful shorthand parameters
-        L = self.langevin_options.num_noise_levels
+        L = self.langevin_options.denoising_steps
         N = self.datagen_options.num_initial_states
 
         # Some helper functions

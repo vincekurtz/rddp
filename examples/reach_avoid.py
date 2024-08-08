@@ -118,7 +118,7 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=1000,
+        denoising_steps=1000,
         starting_noise_level=0.1,
         step_size=0.1,
         noise_injection_level=1.0,
@@ -150,7 +150,7 @@ def generate_dataset(plot: bool = False) -> None:
             idxs = jnp.arange(0, len(h5_dataset), N)
             dataset = h5_dataset[idxs]
         print(f"Loaded dataset in {time.time() - st:.2f} seconds")
-        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
+        visualize_dataset(dataset, prob, langevin_options.denoising_steps)
 
 
 def fit_score_model() -> None:

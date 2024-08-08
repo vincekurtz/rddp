@@ -22,7 +22,7 @@ def test_training() -> None:
     # Generate a training dataset
     prob = OptimalControlProblem(ReachAvoidEnv(num_steps=5), num_steps=5)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=1000,
+        denoising_steps=1000,
         starting_noise_level=0.5,
         step_size=0.01,
     )

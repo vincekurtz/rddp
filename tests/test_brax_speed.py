@@ -66,7 +66,7 @@ def test_generation_speed() -> None:
     env = InvertedPendulum()
     prob = OptimalControlProblem(env, num_steps=15)
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=20,
+        denoising_steps=20,
         starting_noise_level=0.1,
         step_size=1.0,
         noise_injection_level=1.0,
@@ -85,7 +85,7 @@ def test_generation_speed() -> None:
     generator.generate(gen_rng)
     gen_time = time.time() - st
 
-    num_timesteps = prob.num_steps * langevin_options.num_noise_levels
+    num_timesteps = prob.num_steps * langevin_options.denoising_steps
     num_parallel_envs = (
         gen_options.num_initial_states * gen_options.num_rollouts_per_data_point
     )
