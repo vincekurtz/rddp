@@ -85,7 +85,7 @@ def apply_model(
 
     def loss_fn(params: Params) -> jnp.ndarray:
         """Compute the loss for a batch of data points."""
-        s = state.apply_fn(params, batch.y0, batch.U, batch.sigma)
+        s = state.apply_fn(params, batch.Y[0], batch.U, batch.sigma)
         err = jnp.square(s - batch.s)
 
         # Weigh the error by the noise level, as recommended by Song et al.
@@ -128,7 +128,7 @@ def train_superbatch(
     Returns:
         The updated training state and the latest training loss
     """
-    superbatch_size = len(dataset.y0)
+    superbatch_size = len(dataset.Y)
     num_batches = superbatch_size // options.batch_size
 
     def scan_fn(carry: Tuple[TrainState, jnp.ndarray], batch: int):
@@ -201,7 +201,7 @@ def train(
 
     # Initialize the training state
     rng, init_rng = jax.random.split(rng)
-    ny = h5_dataset.y0.shape[-1:]  # TODO: support more generic shapes
+    ny = h5_dataset.Y.shape[0, -1:]
     nu = h5_dataset.U.shape[-2:]
     train_state = create_train_state(network, ny, nu, options, init_rng)
 

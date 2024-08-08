@@ -173,6 +173,21 @@ def test_generate() -> None:
     with h5py.File(local_dir / "dataset.h5", "r") as f:
         h5_dataset = HDF5DiffusionDataset(f)
         assert len(h5_dataset) == N
+        dataset = h5_dataset[:]
+
+    # Check that the costs and outputs that we generated match what we get
+    # from manual rollouts
+    y0 = dataset.Y[:, 0]
+    rng, reset_rng = jax.random.split(rng)
+    reset_rng = jax.random.split(reset_rng, N)
+    x0 = jax.jit(jax.vmap(prob.env.reset))(reset_rng)
+    x0 = x0.tree_replace({"pipeline_state.q": y0, "obs": y0})
+    assert jnp.all(x0.obs == y0)
+    assert jnp.all(x0.pipeline_state.q == y0)
+
+    costs, states = jax.jit(jax.vmap(prob.rollout))(x0, dataset.U)
+    assert jnp.allclose(costs[None].T, dataset.cost)
+    assert jnp.allclose(states.obs, dataset.Y)
 
     # Remove the temporary directory
     for p in local_dir.iterdir():
