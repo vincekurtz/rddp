@@ -12,18 +12,20 @@ class DiffusionDataset:
     """Training data for a diffusion policy.
 
     Attributes:
-        y0: The initial observation y₀.
+        Y: The observation sequence Y = [y₀, y₁, ..., y_T].
         U: The control sequence U = [u₀, u₁, ..., u_T₋₁].
         s: The noised score estimate ŝ = ∇ log pₖ(U | y₀).
         k: The noise level index k.
         sigma: The noise level σₖ.
+        cost: The total cost J(U | y₀) of the rollout.
     """
 
-    y0: jnp.ndarray
+    Y: jnp.ndarray
     U: jnp.ndarray
     s: jnp.ndarray
     k: jnp.ndarray
     sigma: jnp.ndarray
+    cost: jnp.ndarray
 
 
 @dataclass
@@ -41,9 +43,8 @@ class AnnealedLangevinOptions:
     with a decreasing sequence of noise levels σₖ.
 
     Attributes:
-        num_noise_levels: The number of noise levels L.
+        diffusion_steps: The number of denoising steps (and noise levels) L.
         starting_noise_level: The starting noise level σ_L.
-        num_steps: The number of Langevin steps to take at each noise level, N.
         step_size: The Langevin step size α.
         noise_injection_level: The noise injection level for each Langevin step.
             A value of 1.0 corresponds to the standard Langevin dynamics, while
@@ -52,9 +53,8 @@ class AnnealedLangevinOptions:
             exp(-βt), where t = (L - k) / L.
     """
 
-    num_noise_levels: int
+    denoising_steps: int
     starting_noise_level: int
-    num_steps: int
     step_size: float
     noise_injection_level: float = 1.0
     noise_decay_rate: float = 4.0
@@ -63,12 +63,11 @@ class AnnealedLangevinOptions:
 def annealed_langevin_sample(
     options: AnnealedLangevinOptions,
     y0: jnp.ndarray,
-    u_init: jnp.ndarray,
+    controls: jnp.ndarray,
     score_fn: Callable[
         [jnp.ndarray, jnp.ndarray, float, jax.random.PRNGKey], jnp.ndarray
     ],
     rng: jax.random.PRNGKey,
-    noise_range: Tuple[int, int] = None,
 ) -> Tuple[jnp.ndarray, DiffusionDataset]:
     """Generate a sample from the target distribution p(U | y₀).
 
@@ -76,86 +75,65 @@ def annealed_langevin_sample(
 
         pₖ(U | y₀) = ∫ p(Ũ | y₀)N(Ũ;U,σₖ²)dŨ
 
-    with a decreasing sequence of noise levels σₖ. At each level, we sample
-    from pₖ(U | y₀) using Langevin dynamics:
+    with a decreasing sequence of noise levels σₖ. At each step, we update the
+    control sequences Uᵏ as
 
-        Uⁱ⁺¹ = Uⁱ + ε ŝ(y₀, Uⁱ, σₖ) + √(2ε) zⁱ,
+        Uᵏ⁺¹ = Uᵏ + αŝ(y₀, Uⁱ, σₖ) + β√(2α)ε,
+        ε ~ N(0, I).
 
     where ŝ(y₀, Uⁱ, σₖ) is an estimate of the score ∇ log pₖ(U | y₀),
-    ε = ασₖ² is the step size, and zⁱ ~ N(0, I) is Gaussian noise.
+    α ∝ σₖ² is the step size, and β is the noise injection level.
 
     Args:
         options: The annealed Langevin options defining α, σₖ, etc.
         y0: The initial observation y₀ that we condition on.
-        u_init: An initial control sequence, typically U ~ N(0, σ_L²).
+        controls: An initial control sequence, typically U ~ N(0, σ_L²).
         score_fn: A (possibly stochastic) score estimate function ŝ(y₀, U, σ).
         rng: The random number generator key.
-        noise_range: The range of noise levels to sample from. If None, sample
-            from L to 0. This option is useful for dataset generation, where we
-            want to save out to a file during the annealing process.
+
+    Returns:
+        The final sample U⁰ ~ p(U | y₀).
+        A dataset containing the intermediate control sequences Uᵏ scores, etc.
     """
-    L = options.num_noise_levels
+    L = options.denoising_steps
     sigmaL = options.starting_noise_level
-
-    if noise_range is None:
-        start_step, end_step = L, 0
-    else:
-        start_step, end_step = noise_range
-        assert start_step >= end_step, "start_step should be >= end_step"
-        assert start_step <= L, "start_step should be <= L"
-        assert end_step >= 0, "end_step should be >= 0"
-
-    N = options.num_steps
-    alpha = options.step_size
     beta = options.noise_injection_level
 
-    def langevin_step(carry: Tuple, i: int):
-        """Perform a single Langevin sampling step at the k-th noise level.
-
-        Return the new control tape Uₖⁱ⁺¹ and the score estimate ŝₖⁱ.
-        """
-        U, sigma, k, rng = carry
-        rng, score_rng, z_rng = jax.random.split(rng, 3)
-        eps = alpha * sigma**2
-
-        # Langevin dynamics based on the estimated score
-        z = jax.random.normal(z_rng, U.shape)
-        s = score_fn(y0, U, sigma, score_rng)
-        U_new = U + eps * s + beta * jnp.sqrt(2 * eps) * z
-
-        # Record training data
-        data = DiffusionDataset(
-            y0=y0,
-            U=U,
-            s=s,
-            k=jnp.array([k]),
-            sigma=jnp.array([sigma]),
-        )
-
-        return (U_new, sigma, k, rng), data
-
-    def annealed_langevin_step(carry: Tuple, k: int):
-        """Generate N samples at the k-th noise level."""
+    def step_fn(carry: Tuple, k: int):
+        """Update Uᵏ⁺¹ = Uᵏ + αŝ(y₀, Uⁱ, σₖ) + β√(2α)ε."""
         U, rng = carry
+        rng, score_rng, noise_rng = jax.random.split(rng, 3)
 
-        # Set the noise level σₖ
+        # Set the noise level σₖ and step size α
         t = (L - k) / L
         sigma = sigmaL * jnp.exp(-options.noise_decay_rate * t)
+        alpha = options.step_size * sigma**2
 
-        # Run Langevin dynamics for N steps, recording score estimates
-        # along the way
-        rng, langevin_rng = jax.random.split(rng)
-        (U, _, _, _), data = jax.lax.scan(
-            langevin_step, (U, sigma, k, langevin_rng), jnp.arange(N)
+        # Estimate the score ∇ log pₖ(U | y₀)
+        s = score_fn(y0, U, sigma, score_rng)
+
+        # Take a Langevin step
+        noise = jax.random.normal(noise_rng, U.shape)
+        U_new = U + alpha * s + beta * jnp.sqrt(2 * alpha) * noise
+
+        # Save intermediate values in a diffusion dataset
+        # Note that we don't have access to the cost J(U | y₀) or the
+        # observation sequence Y here.
+        dataset = DiffusionDataset(
+            Y=y0,
+            U=U,
+            s=s,
+            k=jnp.expand_dims(k, -1),
+            sigma=jnp.expand_dims(sigma, -1),
+            cost=None,
         )
 
-        return (U, rng), data
+        return (U_new, rng), dataset
 
-    rng, sampling_rng = jax.random.split(rng)
     (U, _), dataset = jax.lax.scan(
-        annealed_langevin_step,
-        (u_init, sampling_rng),
-        jnp.arange(start_step - 1, end_step - 1, -1),
+        step_fn,
+        (controls, rng),
+        jnp.arange(L - 1, -1, -1),
     )
 
     return U, dataset
@@ -178,7 +156,7 @@ def sample_dataset(
         A subset of the dataset at the given noise level.
     """
     assert dataset.k.shape == (
-        dataset.y0.shape[0],
+        dataset.Y.shape[0],
         1,
     ), "dataset should be flattened"
 
@@ -188,11 +166,12 @@ def sample_dataset(
     idxs = idxs[:num_samples]
 
     return DiffusionDataset(
-        y0=dataset.y0[idxs],
+        Y=dataset.Y[idxs],
         U=dataset.U[idxs],
         s=dataset.s[idxs],
         k=dataset.k[idxs],
         sigma=dataset.sigma[idxs],
+        cost=dataset.cost[idxs],
     )
 
 
@@ -216,20 +195,22 @@ class HDF5DiffusionDataset:
         # conversion to jnp arrays is super slow when done directly from the
         # HDF5 file, so we load everything into CPU memory first and only move
         # to GPU when the data is accessed with __getitem__.
-        self.y0 = np.array(file["y0"], dtype=jnp.float32)
+        self.Y = np.array(file["Y"], dtype=jnp.float32)
         self.U = np.array(file["U"], dtype=jnp.float32)
         self.s = np.array(file["s"], dtype=jnp.float32)
         self.sigma = np.array(file["sigma"], dtype=jnp.float32)
         self.k = np.array(file["k"], dtype=jnp.int32)
+        self.cost = np.array(file["cost"], dtype=jnp.float32)
 
         # Size checks
-        self.num_data_points = self.y0.shape[0]
+        self.num_data_points = self.Y.shape[0]
         assert self.U.shape[0] == self.num_data_points
         assert self.s.shape[0] == self.num_data_points
         assert self.sigma.shape[0] == self.num_data_points
         assert self.k.shape[0] == self.num_data_points
         assert self.U.shape == self.s.shape
         assert self.sigma.shape == self.k.shape
+        assert self.cost.shape == (self.num_data_points, 1)
 
     def __len__(self) -> int:
         """Return the number of data points in the dataset."""
@@ -249,9 +230,10 @@ class HDF5DiffusionDataset:
             A jax dataset object containing the data at the given indices.
         """
         return DiffusionDataset(
-            y0=jnp.asarray(self.y0[idx], dtype=jnp.float32),
+            Y=jnp.asarray(self.Y[idx], dtype=jnp.float32),
             U=jnp.asarray(self.U[idx], dtype=jnp.float32),
             s=jnp.asarray(self.s[idx], dtype=jnp.float32),
             sigma=jnp.asarray(self.sigma[idx], dtype=jnp.float32),
             k=jnp.asarray(self.k[idx], dtype=jnp.int32),
+            cost=jnp.asarray(self.cost[idx], dtype=jnp.float32),
         )

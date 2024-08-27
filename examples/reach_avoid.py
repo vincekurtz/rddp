@@ -6,7 +6,6 @@ import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from brax.envs.base import State
 from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import ScoreMLP
@@ -62,12 +61,6 @@ def visualize_dataset(
         num_noise_levels: The number of noise levels in the dataset.
     """
     rng = jax.random.PRNGKey(0)
-    x0 = prob.env.reset(rng)
-
-    def get_initial_state(pos: jnp.ndarray) -> State:
-        return x0.tree_replace({"pipeline_state.q": pos})
-
-    rollout_fn = jax.jit(jax.vmap(prob.rollout))
 
     noise_levels = [
         0,
@@ -85,20 +78,19 @@ def visualize_dataset(
         # Get a random subset of the data at this noise level
         rng, sample_rng = jax.random.split(rng)
         subset = sample_dataset(dataset, k, 32, sample_rng)
+        obs = subset.Y
 
         # Plot the scenario and the sampled trajectories
         prob.env.plot_scenario()
-        x0s = jax.vmap(get_initial_state)(subset.y0)
-        _, Xs = rollout_fn(x0s, subset.U)  # N.B. y = x
-        px, py = Xs.pipeline_state.q[:, :, 0].T, Xs.pipeline_state.q[:, :, 1].T
+        px, py = obs[..., 0].T, obs[..., 1].T
         ax[i].plot(px, py, "o-", color="blue", alpha=0.5)
 
         sigma = subset.sigma[0, 0]
         ax[i].set_title(f"k={k}, σₖ={sigma:.4f}")
 
-    # Plot costs at each iteration
+    # Plot costs across iterations
     plt.figure()
-    for k in range(num_noise_levels):
+    for k in range(0, num_noise_levels, 50):
         iter = num_noise_levels - k
 
         # Get a random subset of the data at this noise level
@@ -106,8 +98,7 @@ def visualize_dataset(
         subset = sample_dataset(dataset, k, 32, sample_rng)
 
         # Compute the cost of each trajectory and add it to the plot
-        x0s = jax.vmap(get_initial_state)(subset.y0)
-        costs, _ = rollout_fn(x0s, subset.U)
+        costs = subset.cost
         plt.scatter(jnp.ones_like(costs) * iter, costs, color="blue", alpha=0.5)
     plt.xlabel("Iteration (L - k)")
     plt.ylabel("Cost J(U, x₀)")
@@ -127,17 +118,17 @@ def generate_dataset(plot: bool = False) -> None:
         num_steps=HORIZON,
     )
     langevin_options = AnnealedLangevinOptions(
-        num_noise_levels=300,
+        denoising_steps=1000,
         starting_noise_level=0.1,
-        num_steps=100,
-        step_size=0.01,
+        step_size=0.1,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
         starting_temperature=1.0,
         num_initial_states=256,
         num_rollouts_per_data_point=128,
-        save_every=100,
+        save_every=1000,
+        print_every=100,
         save_path=save_path,
     )
     generator = DatasetGenerator(prob, langevin_options, gen_options)
@@ -145,7 +136,7 @@ def generate_dataset(plot: bool = False) -> None:
     # Generate some data
     st = time.time()
     rng, gen_rng = jax.random.split(rng)
-    generator.generate_and_save(gen_rng)
+    generator.generate(gen_rng)
     print(f"Data generation took {time.time() - st:.2f} seconds")
 
     # Make some plots if requested
@@ -159,7 +150,7 @@ def generate_dataset(plot: bool = False) -> None:
             idxs = jnp.arange(0, len(h5_dataset), N)
             dataset = h5_dataset[idxs]
         print(f"Loaded dataset in {time.time() - st:.2f} seconds")
-        visualize_dataset(dataset, prob, langevin_options.num_noise_levels)
+        visualize_dataset(dataset, prob, langevin_options.denoising_steps)
 
 
 def fit_score_model() -> None:
@@ -220,7 +211,9 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     options = data["langevin_options"]
 
     # Decide how much noise to add in the Langevin sampling
-    options = options.replace(noise_injection_level=0.0)
+    options = options.replace(
+        noise_injection_level=0.0,
+    )
 
     def optimize_control_tape(rng: jax.random.PRNGKey):
         """Optimize the control sequence using Langevin dynamics."""
@@ -239,9 +232,9 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
         U, data = annealed_langevin_sample(
             options=options,
             y0=x0.obs,
-            u_init=U_guess,
+            controls=U_guess,
             score_fn=lambda y, u, sigma, rng: net.apply(
-                params, y, u, jnp.array([sigma])
+                params, y, u, jnp.atleast_1d(sigma)
             ),
             rng=langevin_rng,
         )
@@ -256,9 +249,9 @@ def deploy_trained_model(plot: bool = True, animate: bool = False) -> None:
     _, data = jax.vmap(optimize_control_tape)(opt_rng)
     print(f"Sample generation took {time.time() - st:.2f} seconds")
 
-    y0 = data.y0[:, :, -1, :]  # take the last sample at each noise level
-    U = data.U[:, :, -1, :]
-    sigma = data.sigma[:, :, -1]
+    y0 = data.Y
+    U = data.U
+    sigma = data.sigma
     costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
     print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 

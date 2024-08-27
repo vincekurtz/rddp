@@ -84,11 +84,11 @@ class ReachAvoidEnv(PipelineEnv):
 
         # Terminal cost
         reward -= jnp.where(
-            state.info["step"] >= self.num_steps,
+            state.info["step"] >= self.num_steps - 1,
             (pos - self.target_position).dot(pos - self.target_position),
             0.0,
         )
-        done = jnp.where(state.info["step"] > self.num_steps, 1.0, 0.0)
+        done = jnp.where(state.info["step"] >= self.num_steps, 1.0, 0.0)
 
         return state.replace(
             pipeline_state=new_pipeline_state,
