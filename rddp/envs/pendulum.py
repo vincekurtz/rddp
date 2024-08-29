@@ -90,10 +90,6 @@ class PendulumSwingupEnv(PipelineEnv):
             maxval=self.config.qvel_hi,
         )
 
-        # DEBUG
-        qpos *= 0.0
-        qvel *= 0.0
-
         data = self.pipeline_init(qpos, qvel)
 
         # other state fields

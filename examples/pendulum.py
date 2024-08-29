@@ -3,6 +3,7 @@ import sys
 import time
 
 import jax
+import jax.numpy as jnp
 import mujoco
 import mujoco.viewer
 
@@ -27,7 +28,7 @@ def generate_dataset() -> None:
     langevin_options = AnnealedLangevinOptions(
         denoising_steps=1000,
         starting_noise_level=0.1,
-        step_size=0.1,
+        step_size=1.0,
         noise_injection_level=1.0,
     )
     gen_options = DatasetGenerationOptions(
@@ -89,8 +90,18 @@ def deploy_trained_model() -> None:
     jit_rollout = jax.jit(prob.rollout)
     jit_policy = jax.jit(policy.apply)
 
+    # Set the initial state
     rng, reset_rng, policy_rng = jax.random.split(rng, 3)
     x0 = jit_reset(reset_rng)
+    start_state = prob.env.pipeline_init(jnp.array([0.0]), jnp.array([0.0]))
+    x0 = x0.tree_replace(
+        {
+            "pipeline_state": start_state,
+            "obs": prob.env._compute_obs(start_state, {}),
+        }
+    )
+
+    # Rollout the policy
     U = jit_policy(x0.obs, policy_rng)
     cost, states = jit_rollout(x0, U)
     print(f"Total cost: {cost}")
@@ -102,6 +113,10 @@ def deploy_trained_model() -> None:
     dt = float(prob.env.dt)
     t = 0
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
+        # Use the fixed camera
+        viewer.cam.fixedcamid = 0
+        viewer.cam.type = 2
+
         while viewer.is_running():
             start_time = time.time()
 
