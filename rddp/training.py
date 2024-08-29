@@ -212,7 +212,7 @@ def train(
 
     # Helper function for shuffling the dataset
     jit_shuffle = jax.jit(
-        lambda data, perm: jax.tree_map(lambda x: x[perm], data)
+        lambda data, perm: jax.tree.map(lambda x: x[perm], data)
     )
 
     metrics = {"loss": [], "load_time": [], "train_time": []}

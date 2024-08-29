@@ -11,8 +11,9 @@ from rddp.envs.double_integrator import DoubleIntegratorEnv
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.gradient_descent import solve as solve_gd
 from rddp.ocp import OptimalControlProblem
+from rddp.policy import DiffusionPolicy
 from rddp.training import TrainingOptions, train
-from rddp.utils import AnnealedLangevinOptions, annealed_langevin_sample
+from rddp.utils import AnnealedLangevinOptions
 
 # Global planning horizon definition
 HORIZON = 10
@@ -88,16 +89,10 @@ def fit_score_model() -> None:
     params, metrics = train(net, data_dir + "dataset.h5", training_options)
     print(f"Training took {time.time() - st:.2f} seconds")
 
-    # Save the trained model and parameters
-    fname = "/tmp/double_integrator_score_model.pkl"
-    with open(fname, "wb") as f:
-        data = {
-            "params": params,
-            "net": net,
-            "langevin_options": langevin_options,
-        }
-        pickle.dump(data, f)
-    print(f"Saved trained model to {fname}")
+    # Save the trained policy
+    fname = "/tmp/double_integrator_policy.pkl"
+    policy = DiffusionPolicy(net, params, langevin_options, (HORIZON - 1, 1))
+    policy.save(fname)
 
 
 def deploy_trained_model(plot: bool = True) -> None:
@@ -106,76 +101,26 @@ def deploy_trained_model(plot: bool = True) -> None:
     prob = OptimalControlProblem(
         DoubleIntegratorEnv(), num_steps=HORIZON, u_max=10.0
     )
+    policy = DiffusionPolicy.load("/tmp/double_integrator_policy.pkl")
 
-    def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
-        """Do a rollout from an observation, and return observations."""
+    def _rollout_policy(rng: jax.random.PRNGKey) -> jnp.ndarray:
         x0 = prob.env.reset(rng)
-        x0 = x0.tree_replace(
-            {
-                "pipeline_state.q": jnp.array([y0[0]]),
-                "pipeline_state.qd": jnp.array([y0[1]]),
-                "obs": y0,
-            }
-        )
-        cost, X = prob.rollout(x0, u)
-        return cost, X.obs
+        U = policy.apply(x0.obs, rng)
+        return prob.rollout(x0, U)
 
-    # Load the trained score network
-    with open("/tmp/double_integrator_score_model.pkl", "rb") as f:
-        data = pickle.load(f)
-    params = data["params"]
-    net = data["net"]
-    options = data["langevin_options"]
-
-    # Decide how much noise to add in the Langevin sampling
-    options = options.replace(noise_injection_level=0.0)
-
-    def optimize_control_tape(rng: jax.random.PRNGKey):
-        """Optimize the control sequence using Langevin dynamics."""
-        # Guess an initial control sequence
-        rng, guess_rng = jax.random.split(rng, 2)
-        U_guess = options.starting_noise_level * jax.random.normal(
-            guess_rng, (prob.num_steps - 1, 1)
-        )
-
-        # Set the initial state and observation
-        rng, state_rng = jax.random.split(rng)
-        x0 = prob.env.reset(state_rng)
-
-        # Do annealed langevin sampling
-        rng, langevin_rng = jax.random.split(rng)
-        U, data = annealed_langevin_sample(
-            options=options,
-            y0=x0.obs,
-            controls=U_guess,
-            score_fn=lambda x, u, sigma, rng: net.apply(
-                params, x, u, jnp.array([sigma])
-            ),
-            rng=langevin_rng,
-        )
-
-        return U, data
-
-    # Optimize from a bunch of initial guesses
     num_samples = 32
-    rng, opt_rng = jax.random.split(rng)
-    opt_rng = jax.random.split(opt_rng, num_samples)
-    st = time.time()
-    _, data = jax.vmap(optimize_control_tape)(opt_rng)
-    print(f"Sample generation took {time.time() - st:.2f} seconds")
+    rng, sample_rng = jax.random.split(rng)
+    sample_rng = jax.random.split(sample_rng, num_samples)
 
-    y0 = data.Y
-    U = data.U
-    costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
+    costs, states = jax.vmap(_rollout_policy)(sample_rng)
     print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
 
     # Plot the sampled trajectories
     if plot:
         prob.env.plot_scenario()
+        y = states.obs
         for i in range(num_samples):
-            plt.plot(
-                Xs[i, -1, :, 0], Xs[i, -1, :, 1], "o-", color="blue", alpha=0.5
-            )
+            plt.plot(y[i, :, 0], y[i, :, 1], "o-", color="blue", alpha=0.5)
         plt.show()
 
 

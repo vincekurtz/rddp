@@ -6,19 +6,18 @@ import h5py
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
 from rddp.architectures import ScoreMLP
 from rddp.envs.bug_trap import BugTrapEnv
 from rddp.generation import DatasetGenerationOptions, DatasetGenerator
 from rddp.gradient_descent import solve as solve_gd
 from rddp.ocp import OptimalControlProblem
+from rddp.policy import DiffusionPolicy
 from rddp.training import TrainingOptions, train
 from rddp.utils import (
     AnnealedLangevinOptions,
     DiffusionDataset,
     HDF5DiffusionDataset,
-    annealed_langevin_sample,
     sample_dataset,
 )
 
@@ -170,117 +169,47 @@ def fit_score_model() -> None:
     params, metrics = train(net, data_dir + "dataset.h5", training_options)
     print(f"Training took {time.time() - st:.2f} seconds")
 
-    # Save the trained model and parameters
-    fname = "/tmp/bug_trap_score_model.pkl"
-    with open(fname, "wb") as f:
-        data = {
-            "params": params,
-            "net": net,
-            "langevin_options": langevin_options,
-        }
-        pickle.dump(data, f)
-    print(f"Saved trained model to {fname}")
+    # Save the trained policy
+    fname = "/tmp/bug_trap_policy.pkl"
+    policy = DiffusionPolicy(net, params, langevin_options, (HORIZON - 1, 2))
+    policy.save(fname)
+    print(f"Saved trained policy to {fname}")
 
 
-def deploy_trained_model(
-    plot: bool = True, animate: bool = False, save_path: str = None
-) -> None:
+def deploy_trained_model(plot: bool = True) -> None:
     """Use the trained model to generate optimal actions."""
     rng = jax.random.PRNGKey(0)
     prob = OptimalControlProblem(
         BugTrapEnv(num_steps=HORIZON), num_steps=HORIZON
     )
+    policy = DiffusionPolicy.load("/tmp/bug_trap_policy.pkl")
 
-    def rollout_from_obs(y0: jnp.ndarray, u: jnp.ndarray):
-        """Do a rollout from an observation, and return observations."""
-        x0 = prob.env.reset(rng)
-        x0 = x0.tree_replace({"pipeline_state.q": y0, "obs": y0})
-        cost, X = prob.rollout(x0, u)
-        return cost, X.obs
+    def _rollout_policy(rng: jax.random.PRNGKey):
+        """Rollout the policy under a random initial state."""
+        rng, reset_rng, policy_rng = jax.random.split(rng, 3)
+        x0 = prob.env.reset(reset_rng)
+        U = policy.apply(x0.obs, policy_rng)
+        return prob.rollout(x0, U)
 
-    # Load the trained score network
-    with open("/tmp/bug_trap_score_model.pkl", "rb") as f:
-        data = pickle.load(f)
-    params = data["params"]
-    net = data["net"]
-    options = data["langevin_options"]
-
-    # Decide how much noise to add in the Langevin sampling
-    options = options.replace(noise_injection_level=0.0)
-
-    def optimize_control_tape(rng: jax.random.PRNGKey):
-        """Optimize the control sequence using Langevin dynamics."""
-        # Guess an initial control sequence
-        rng, guess_rng = jax.random.split(rng, 2)
-        U_guess = options.starting_noise_level * jax.random.normal(
-            guess_rng, (prob.num_steps - 1, 2)
-        )
-
-        # Set the initial state
-        rng, state_rng = jax.random.split(rng)
-        x0 = prob.env.reset(state_rng)
-
-        # Do annealed langevin sampling
-        rng, langevin_rng = jax.random.split(rng)
-        U, data = annealed_langevin_sample(
-            options=options,
-            y0=x0.obs,
-            controls=U_guess,
-            score_fn=lambda y, u, sigma, rng: net.apply(
-                params, y, u, jnp.array([sigma])
-            ),
-            rng=langevin_rng,
-        )
-
-        return U, data
-
-    # Optimize from a bunch of initial guesses
     num_samples = 32
-    rng, opt_rng = jax.random.split(rng)
-    opt_rng = jax.random.split(opt_rng, num_samples)
+    rng, sample_rng = jax.random.split(rng)
+    sample_rng = jax.random.split(sample_rng, num_samples)
     st = time.time()
-    _, data = jax.vmap(optimize_control_tape)(opt_rng)
-    print(f"Sample generation took {time.time() - st:.2f} seconds")
+    costs, states = jax.vmap(_rollout_policy)(sample_rng)
+    print(f"Rollouts took {time.time() - st:.2f} seconds")
+    print(f"Cost: {costs.mean():.4f} ± {costs.std():.4f}")
 
-    y0 = data.Y
-    U = data.U
-    sigma = data.sigma
-    costs, Xs = jax.vmap(jax.vmap(rollout_from_obs))(y0, U)
-    print(f"Cost: {jnp.mean(costs[-1]):.4f} +/- {jnp.std(costs[-1]):.4f}")
-
-    # Plot the sampled trajectories
     if plot:
+        # Plot the scenario and the trajectory
         prob.env.plot_scenario()
+        pos = states.pipeline_state.q
         for i in range(num_samples):
-            plt.plot(
-                Xs[i, -1, :, 0], Xs[i, -1, :, 1], "o-", color="blue", alpha=0.5
-            )
-        plt.show()
-
-    # Animate the trajectory generation process
-    if animate:
-        fig, ax = plt.subplots()
-        prob.env.plot_scenario()
-        path = ax.plot([], [], "o-")[0]
-
-        def update(i: int):
-            j, i = divmod(i, options.num_noise_levels)
-            j = j % num_samples
-            ax.set_title(f"σₖ={sigma[0, i, 0]:.4f}")
-            path.set_data(Xs[j, i, :, 0], Xs[j, i, :, 1])
-            return path
-
-        anim = FuncAnimation(  # noqa: F841 anim must stay in scope until plot
-            fig,
-            update,
-            frames=options.num_noise_levels * num_samples,
-            interval=10,
-        )
+            plt.plot(pos[i, :, 0], pos[i, :, 1], "o-", color="blue", alpha=0.5)
         plt.show()
 
 
 if __name__ == "__main__":
-    usage = "Usage: python bug_trap.py [generate|fit|deploy|gd|animate]"
+    usage = "Usage: python bug_trap.py [generate|fit|deploy|gd]"
 
     if len(sys.argv) != 2:
         print(usage)
@@ -293,8 +222,6 @@ if __name__ == "__main__":
         deploy_trained_model()
     elif sys.argv[1] == "gd":
         solve_with_gradient_descent()
-    elif sys.argv[1] == "animate":
-        deploy_trained_model(plot=False, animate=True)
     else:
         print(usage)
         sys.exit(1)
