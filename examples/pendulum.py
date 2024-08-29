@@ -3,6 +3,8 @@ import sys
 import time
 
 import jax
+import mujoco
+import mujoco.viewer
 
 from rddp.architectures import ScoreMLP
 from rddp.envs.pendulum import PendulumSwingupEnv
@@ -13,7 +15,7 @@ from rddp.training import TrainingOptions, train
 from rddp.utils import AnnealedLangevinOptions
 
 # Global planning horizon definition
-HORIZON = 100
+HORIZON = 50
 
 
 def generate_dataset() -> None:
@@ -62,7 +64,7 @@ def fit_score_model() -> None:
         print_every=100,
         learning_rate=1e-3,
     )
-    net = ScoreMLP(layer_sizes=(128,) * 3)
+    net = ScoreMLP(layer_sizes=(512,) * 3)
 
     # Train the score network
     st = time.time()
@@ -92,6 +94,35 @@ def deploy_trained_model() -> None:
     U = jit_policy(x0.obs, policy_rng)
     cost, states = jit_rollout(x0, U)
     print(f"Total cost: {cost}")
+
+    # Visualize the trajectory
+    mj_model = prob.env.sys.mj_model
+    mj_data = mujoco.MjData(mj_model)
+
+    dt = float(prob.env.dt)
+    t = 0
+    with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
+        while viewer.is_running():
+            start_time = time.time()
+
+            # Update the position
+            mj_data.qpos = states.pipeline_state.q[t]
+            mj_data.qvel = states.pipeline_state.qd[t]
+            mj_data.ctrl = U[t]
+
+            # Update the viewer
+            mujoco.mj_forward(mj_model, mj_data)
+            viewer.sync()
+
+            # Try to run in realtime
+            elapsed_time = time.time() - start_time
+            if elapsed_time < dt:
+                time.sleep(dt - elapsed_time)
+
+            t += 1
+            if t >= HORIZON:
+                time.sleep(1.0)
+                t = 0
 
 
 if __name__ == "__main__":
