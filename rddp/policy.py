@@ -31,8 +31,10 @@ class DiffusionPolicy:
         """
         self.net = net
         self.params = params
-        self.options = options
         self.action_shape = action_shape
+
+        # Override to perform score ascent rather than Langevin sampling
+        self.options = options.replace(noise_injection_level=0.0)
 
     def save(self, path: Union[str, Path]) -> None:
         """Save the policy to a file.
